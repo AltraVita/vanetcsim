@@ -179,7 +179,7 @@ int main(int argc, char **argv)
 	context.clock = context.startAt;
 	set_traces_at_clock(&traces, context.clock);
 	context.currentPos = context.newestPos = 0;
-
+	int counter = 0;
 	if (region != NULL && method == MAP_METHOD) {
 		mount_traces_at_slot(region, &traces, &context, 0);
 		mount_traces(region, &traces, &context);
@@ -191,9 +191,11 @@ int main(int argc, char **argv)
 		mount_traces_at_seperate_slot(&traces, &context, spSlots, 0);
 		mount_traces_with_seperate_slots(&traces, &context, spSlots);
 		while(context.currentPos != context.newestPos) {
-			find_contact_samples_with_seperate_slots(&pairSmpTable, &context, spSlots);
-			free_used_reports(&traces);
-			mount_traces_with_seperate_slots(&traces, &context, spSlots);
+		  counter ++;
+		  printf("counter = %15d\n" , counter);
+		  find_contact_samples_with_seperate_slots(&pairSmpTable, &context, spSlots);
+		  free_used_reports(&traces);
+		  mount_traces_with_seperate_slots(&traces, &context, spSlots);
 		}
 		
 	}
@@ -212,6 +214,8 @@ int main(int argc, char **argv)
 	hashtable_init(&pairContTable, pairTableSize, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))pair_has_names);
 	for (i=0;i<pairSmpTable.size;i++) {
 		aPairItem = pairSmpTable.head[i];
+		if(i%100==0)
+		  printf("%15d/%-15d\n",i,pairSmpTable.size);
 		while (aPairItem != NULL) {
 			aPair = (struct Pair*)aPairItem->datap;
 			aItem = aPair->contents.head;
