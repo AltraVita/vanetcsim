@@ -1,0 +1,131 @@
+#include<stdlib.h>
+#include<stdio.h>
+#include<string.h>
+#include"common.h"
+
+#define BUFF_SIZE 32768
+
+/* input the pkgdumpfile of each method, 
+ * the program will generate a compared
+ * delay result file with each colume 
+ * presenting the result of each method.
+ */
+int main(int argc, char**argv)
+{
+	int i, numMethods;
+	FILE *fp, *fpp, *fdump;
+	char *dchar = " ";
+	double  delay, *newDly;
+	struct Item *aPkglistItem, *temp;
+	struct Duallist pkgLists, *aPkglist;
+	char buf[BUFF_SIZE], *strp, *dlydumpfile=NULL;
+
+	if(argc < 2) {
+		printf("Usage: %s [-d cutchar] [-w dlydump] pkgdumpfile1 pkgdumpfile2 ...\n", argv[0]);
+		exit(1);
+	}
+
+	while(argv[1][0] == '-') {
+		switch(argv[1][1]) {
+		case 'd':
+			dchar = argv[2];
+			argc-=2;
+			argv+=2;
+			break;
+		case 'w':
+			dlydumpfile = argv[2];
+			argc-=2;
+			argv+=2;
+			break;
+		}
+	}
+
+	numMethods = argc - 1;
+
+	if( (fp=fopen(argv[1], "r"))== NULL) 
+		return -1;
+
+	duallist_init(&pkgLists);
+
+	if(fgets(buf,BUFF_SIZE, fp)) {
+		strp = strtok(buf, dchar);
+		newDly = (double*)malloc(sizeof(double));
+		*newDly = atof(strp);
+		aPkglist = (struct Duallist*)malloc(sizeof(struct Duallist));
+		duallist_init(aPkglist);
+		duallist_add_to_tail(&pkgLists, aPkglist);
+		if(*newDly == -1) 
+			free(newDly);
+		else 
+			duallist_add_to_tail(aPkglist, newDly);
+		
+		while((strp = strtok(NULL, dchar))!=NULL) {
+			newDly = (double*)malloc(sizeof(double));
+			*newDly = atof(strp);
+			aPkglist = (struct Duallist*)malloc(sizeof(struct Duallist));
+			duallist_init(aPkglist);
+			duallist_add_to_tail(&pkgLists, aPkglist);
+			if(*newDly == -1) 
+				free(newDly);
+			else 
+				duallist_add_to_tail(aPkglist, newDly);
+		}
+		while(fgets(buf, 2048, fp)) {
+			aPkglistItem = pkgLists.head;
+			aPkglist = (struct Duallist*)aPkglistItem->datap;
+
+			strp = strtok(buf, dchar);
+			newDly = (double*)malloc(sizeof(double));
+			*newDly = atof(strp);
+			if(*newDly == -1) 
+				free(newDly);
+			else 
+				duallist_add_to_tail(aPkglist, newDly);
+			
+			while((strp = strtok(NULL, dchar))!=NULL) {
+				aPkglistItem = aPkglistItem->next;
+				aPkglist = (struct Duallist*)aPkglistItem->datap;
+
+				newDly = (double*)malloc(sizeof(double));
+				*newDly = atof(strp);
+				if(*newDly == -1) 
+					free(newDly);
+				else 
+					duallist_add_to_tail(aPkglist, newDly);
+			}
+		}
+
+		aPkglistItem = pkgLists.head;
+		while (aPkglistItem != NULL) {
+			temp = aPkglistItem->next;
+			aPkglist = (struct Duallist*)aPkglistItem->datap;
+			if(aPkglist->nItems < numMethods) {
+				duallist_destroy(duallist_pick_item(&pkgLists, aPkglistItem), free);
+				aPkglistItem = temp;
+				continue;
+			}
+			aPkglistItem = aPkglistItem->next;
+		}
+
+		if((fdump=fopen(dlydumpfile, "a"))!=NULL) {
+			for(i=0;i<numMethods;i++) {
+				delay = 0;
+				aPkglistItem = pkgLists.head;
+				while (aPkglistItem != NULL) {
+					aPkglist = (struct Duallist*)aPkglistItem->datap;
+					newDly = (double*)duallist_pick_head(aPkglist);
+					delay = delay + *newDly;
+					free(newDly);
+
+					aPkglistItem = aPkglistItem->next;
+				}
+				fprintf(fdump, "%.2lf ", delay/pkgLists.nItems);
+			}
+			duallist_destroy(&pkgLists, free);
+			fclose(fdump);
+		}
+		fclose(fp);
+	}
+
+	return 0;
+}

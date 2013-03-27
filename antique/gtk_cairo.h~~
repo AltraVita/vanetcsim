@@ -1,0 +1,178 @@
+#ifndef GTK_CAIRO_H
+#define GTK_CAIRO_H
+
+#include <gtk/gtk.h>
+#include <time.h>
+#include "geometry.h"
+#include "contact.h"
+#include "common.h"
+#include "color.h"
+#include "busroute.h"
+
+#define NUM_OF_ROUTES 200
+#define NUM_OF_TRACES 2000
+#define NUM_OF_CONTACTPAIRS 20000
+/* one meter on the ground */
+#define MARGIN 10 
+
+#define MARK_LENGTH 12 
+#define CONTACT_RADIUS 2 
+#define FONT_SIZE 12
+
+struct WindowSize
+{
+  /* coordinate window size*/
+  struct Box cBox;
+
+  /* screen window size*/
+  struct Box sBox;
+
+  double scale;
+};
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+// screen display >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+struct Context
+{
+  struct Region *region;
+  /* bus route table */
+  struct Hashtable routeTable;
+  struct Duallist selectedRoutes;
+  /* play GPS reports */
+  struct Hashtable traceTable;
+  struct Duallist selectedTraces;
+  struct Trace *focusTrace;
+  /* play contacts */
+  struct Hashtable pairTable;
+  struct Duallist selectedPairs;
+  struct Pair *focusPair;
+  /*play cell dynamic */
+  struct Hashtable cellTable;
+  /*RSU topology*/
+  struct Region *vRegion;
+  struct Duallist rsus;
+  struct Duallist links;
+
+
+  /* stuff may be shown on screen */
+  struct Box screenBox;
+  struct Duallist screenRoads;
+  struct Duallist screenCrosses;	
+  struct Duallist screenDistricts;
+  struct Duallist screenRivers;
+  struct Duallist screenTraces;
+  struct Duallist screenRoutes;
+  struct Duallist screenPairs;
+  struct Duallist screenSurroundings;
+  /* which area the mouse is locating in */
+  int screenArea;
+  /* the mouse is currently on which road or on empty place (NULL)*/
+  struct Road * mouseAtRoad;
+  /* the mouse is currently on which cross or on empty place (NULL)*/
+  struct Cross * mouseAtCross;
+  /* the mouse is currently on which cell or on empty place (NULL)*/
+  struct Cell * mouseAtCell;
+  /* the mouse is currently on which log or on empty place (NULL) */
+  struct Report * mouseAtReport;
+  /* where the screen's origin on canvas*/
+  int screenX;
+  int screenY;
+  int screenWidth;
+  int screenHeight;
+
+
+  struct WindowSize canvasWindow;
+  /* place to draw everything on */
+  GdkPixmap *canvas;
+  double scale;
+  double meterperpixel;
+  int firstShown;
+  /* cairo draw context */
+  cairo_t * cr_on_canvas;
+  cairo_t * cr_on_screen;
+  /* gtk widgets*/
+  GtkWidget *drawingArea;
+  GtkWidget *backwardButton;
+  GtkWidget *forwardButton;
+  /* gtk context */
+  GdkGC *gc;
+  /* for play data */
+  int playSpeed;
+  guint timeout;
+  time_t startAt;
+  time_t endAt;
+  time_t atClock;
+  /* colormap for data presentation */
+  struct Colormap *colormap;
+
+};
+
+//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<  
+
+enum 
+{
+  COLUMN_TODRAW,
+  COLUMN_NAME,
+  NUM_COLUMNS
+};
+
+enum
+{
+  COLUMN_RD_NAME,
+  NUM_RD_COLUMNS
+};
+
+
+/*
+*
+* Drawing operations
+*
+********************************************************************/
+void set_background_color(GdkGC *gc, int red, int green, int blue);
+void set_foreground_color(GdkGC *gc, int red, int green, int blue);
+void rub_bar(GdkDrawable *drawable, GdkGC *gc, int barWidth);
+void brush_bar(GdkDrawable *drawable, GdkGC *gc, int barWidth, int no);
+
+void init_context(struct Context *aContext);
+void setup_context(struct Context *aContext, struct WindowSize *awin);
+void destroy_context( struct Context *aContext);
+
+void draw_canvas(struct Context *aContext);
+void draw_districts(struct Context *aContext);
+void draw_rivers(struct Context *aContext);
+void draw_roads(struct Context *aContext);
+void draw_crosses(struct Context *aContext);
+void draw_selected_routes(struct Context *aContext, cairo_t *cr);
+void draw_single_road(struct Context *aContext, cairo_t *cr, struct Road *aRoad, struct RGBO *fillColor);
+void draw_single_cross(struct Context *aContext, cairo_t *cr, struct Cross *aCroass, struct RGBO *color);
+void draw_single_cell(struct Context *aContext, cairo_t *cr, struct Cell *aCell, struct RGBO *color);
+void draw_single_route(struct Context *aContext, cairo_t *cr, struct Busroute *aRoute);
+void draw_rsus(struct Context *aContext);
+void draw_links(struct Context *aContext);
+
+void draw_cells(struct Context *aContext, cairo_t *cr);
+void draw_cell_display(struct Context *aContext, cairo_t *cr, struct Cell *aCell);
+void rubber_cells(struct Context *aContext);
+
+void setup_screen(struct Context *aContext, int screenX, int screenY);
+void draw_screen(struct Context *aContext);
+void draw_yardstick_on_screen(struct Context *aContext);
+void draw_text_on_screen(struct Context *aContext, char* text, int x, int y, int size);
+void show_district_on_screen(struct Context *aContext, struct District *aDistrict, cairo_t *cr);
+
+void draw_displayed_traces(struct Context *aContext, cairo_t*cr);
+void draw_displayed_pairs(struct Context *aContext, cairo_t *cr);
+void draw_displayed_reports(struct Context *aContext, cairo_t *cr, struct Trace *aTrace);
+void draw_displayed_contacts(struct Context *aContext, cairo_t *cr, struct Pair *aPair);
+void draw_single_report(struct Context *aContext, cairo_t *cr, struct Report *aReport, struct RGBO *color);
+void draw_single_contact(struct Context *aContext, cairo_t *cr, struct Contact *aContact, struct RGBO *color);
+void rubber_single_report(struct Context *aContext, cairo_t *cr, struct Report *aReport);
+
+void gps_to_canvas(struct WindowSize* awnd, double x, double y, double *rx, double *ry);
+double canvas_to_gps(struct WindowSize* awnd, double x, double y, double *rx, double *ry);
+void assign_window_size(struct WindowSize *target, struct WindowSize *source);
+struct Colormap* load_colormap(char *filename);
+void free_colormap(struct Colormap *cmap);
+void get_color(struct Colormap *cmap, struct Color *rtColor, double value, double lower, double upper);
+
+#endif

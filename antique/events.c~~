@@ -1,0 +1,1150 @@
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <math.h>
+#include "color.h"
+#include "common.h"
+#include "trace.h"
+#include "contact.h"
+#include "gtk_cairo.h"
+#include "events.h"
+#include "files.h"
+
+#define RECOGNITION_GRAN 5
+#define MAXVALUE 100000
+
+extern struct Context *aContext;
+
+
+gboolean forward(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+  	if(aContext->timeout != 0) 
+		gtk_timeout_remove(aContext->timeout);  
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(aContext->backwardButton), FALSE);
+		aContext->playSpeed = PLAY_SPEED;
+		aContext->timeout = gtk_timeout_add(1000/aContext->playSpeed, draw_forward, aContext->forwardButton); 
+	}
+
+	return TRUE;
+}
+
+gboolean fast_forward(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(aContext->forwardButton))) {
+		if(aContext->playSpeed > 1000) return TRUE;
+		aContext->playSpeed *=2;
+		if(aContext->timeout != 0) {
+			g_print("playSpeed: %dX\n", aContext->playSpeed/PLAY_SPEED);
+			gtk_timeout_remove(aContext->timeout);  
+			aContext->timeout = gtk_timeout_add(1000/aContext->playSpeed, draw_forward, aContext->forwardButton); 
+		}
+		return TRUE;
+	}
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(aContext->backwardButton))) {
+		if(aContext->playSpeed == PLAY_SPEED) return TRUE;
+		aContext->playSpeed /= 2;
+		if(aContext->timeout != 0) {
+			g_print("playSpeed: -%dX\n", aContext->playSpeed/PLAY_SPEED);
+			gtk_timeout_remove(aContext->timeout);  
+			aContext->timeout = gtk_timeout_add(1000/aContext->playSpeed, draw_backward, aContext->backwardButton); 
+		}
+		return TRUE;
+	}
+	return TRUE;
+}
+
+
+gboolean backward(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	if(aContext->timeout != 0) 
+		gtk_timeout_remove(aContext->timeout);  
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(aContext->forwardButton), FALSE);
+		aContext->playSpeed = PLAY_SPEED;
+		aContext->timeout = gtk_timeout_add(1000/aContext->playSpeed, draw_backward, aContext->backwardButton); 
+	}
+
+	return TRUE;
+}
+
+
+gboolean fast_backward(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(aContext->backwardButton))) {
+		if(aContext->playSpeed > 1000) return TRUE;
+		aContext->playSpeed *=2;
+		if(aContext->timeout != 0) {
+			g_print("playSpeed: -%dX\n", aContext->playSpeed/PLAY_SPEED);
+			gtk_timeout_remove(aContext->timeout);  
+			aContext->timeout = gtk_timeout_add(1000/aContext->playSpeed, draw_backward, aContext->backwardButton); 
+		}
+		return TRUE;
+	}
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(aContext->forwardButton))) {
+		if(aContext->playSpeed == PLAY_SPEED) return TRUE;
+		aContext->playSpeed /= 2;
+		if(aContext->timeout != 0) {
+			g_print("playSpeed: %dX\n", aContext->playSpeed/PLAY_SPEED);
+			gtk_timeout_remove(aContext->timeout);  
+			aContext->timeout = gtk_timeout_add(1000/aContext->playSpeed, draw_forward, aContext->forwardButton); 
+		}
+		return TRUE;
+	}
+	return TRUE;
+}
+
+/* replay selected */
+gboolean replay(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	aContext->atClock = aContext->startAt; 
+
+	set_selected_traces_time(&aContext->selectedTraces, aContext->atClock);
+	set_selected_pairs_time(&aContext->selectedPairs, aContext->atClock);
+	set_cell_table_time(&aContext->cellTable, aContext->atClock);
+	
+	gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+	draw_displayed_traces(aContext, aContext->cr_on_screen);	
+	return TRUE;
+}
+
+/* input start timestamp */
+void enter_from_time(GtkWidget *widget, GtkWidget *entry)
+{
+  const gchar *entry_text;
+  entry_text = gtk_entry_get_text(GTK_ENTRY(entry));
+  
+  aContext->startAt = strtot(entry_text);
+  replay(NULL, NULL, NULL);
+}
+
+/* input stop timestamp */
+void enter_until_time(GtkWidget *widget, GtkWidget *entry)
+{
+  const gchar *entry_text;
+  entry_text = gtk_entry_get_text(GTK_ENTRY(entry));
+  
+  aContext->endAt = strtot(entry_text);
+}
+
+
+void roadlist_tree_selection_changed(GtkTreeSelection *selection, gpointer data)
+{
+        GtkTreeIter iter;
+        GtkTreeModel *model;
+        gchar *name;
+	int number;
+  	double  x0, y0;
+
+	struct Item *aItem;
+	struct Road *aRoad;
+
+	struct RGBO color;
+	double zoom_scale = FIND_SCALE/aContext->scale;
+
+        if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+                gtk_tree_model_get (model, &iter, COLUMN_RD_NAME, &name, -1);
+		number = atoi(name);
+		aItem = duallist_find(&aContext->region->roads, &number, (int(*)(void*, void*))road_has_id);
+		aRoad = (struct Road*)aItem->datap;
+		gps_to_canvas(&aContext->canvasWindow, (aRoad->box.xmin + aRoad->box.xmax)/2, (aRoad->box.ymin + aRoad->box.ymax)/2, &x0, &y0);
+		aContext->scale = FIND_SCALE;
+		aContext->canvasWindow.sBox.xmax = aContext->canvasWindow.sBox.xmax*zoom_scale;
+		aContext->canvasWindow.sBox.ymax = aContext->canvasWindow.sBox.ymax*zoom_scale;
+		setup_screen(aContext, MAX(x0*zoom_scale-0.5*aContext->screenWidth, -MARGIN), MAX(y0*zoom_scale-0.5*aContext->screenHeight, -MARGIN));
+  		draw_screen(aContext);
+
+		color.red = 220, color.green = 0, color.blue = 0, color.opacity = 255;
+		draw_single_road(aContext, aContext->cr_on_screen, aRoad, &color);
+                g_free (name);
+        }
+}
+
+
+/* bus routes */
+
+void route_selected(GtkCellRendererToggle *cell, gchar *path_str, gpointer data)
+{
+  GtkTreeModel *model = (GtkTreeModel *)data;
+  GtkTreeIter  iter;
+  GtkTreePath *path = gtk_tree_path_new_from_string (path_str);
+  gboolean toDraw;
+  gchar* name;
+  struct Item *aItem;
+  struct Busroute *aRoute;
+  struct Point point;
+
+  // get toggled iter 
+  gtk_tree_model_get_iter (model, &iter, path);
+  gtk_tree_model_get (model, &iter, COLUMN_TODRAW, &toDraw, COLUMN_NAME, &name, -1);
+
+  // do something with the value 
+  toDraw ^= 1;
+
+  // set new value 
+  gtk_list_store_set (GTK_LIST_STORE (model), &iter, COLUMN_TODRAW, toDraw, -1);
+  if(toDraw != FALSE) {
+	aItem = hashtable_find(&aContext->routeTable, name);
+
+	aRoute = (struct Busroute*)aItem->datap;
+	duallist_add_to_tail(&aContext->selectedRoutes, aRoute);
+	gps_to_canvas(&aContext->canvasWindow, (aRoute->box.xmin+aRoute->box.xmax)/2, (aRoute->box.ymin+aRoute->box.ymax)/2, &(point.x), &(point.y));
+	if(point.x > aContext->screenX+MARGIN && point.x < aContext->screenX+aContext->screenWidth-MARGIN && point.y > aContext->screenY+MARGIN && point.y < aContext->screenY+aContext->screenHeight-MARGIN) {
+		draw_single_route(aContext, aContext->cr_on_screen, aRoute);
+	} else {
+		setup_screen(aContext, MAX(point.x-0.5*aContext->screenWidth, -MARGIN), MAX(point.y-0.5*aContext->screenHeight, -MARGIN));
+		draw_screen(aContext);
+	}
+  } else {
+	aRoute = duallist_pick(&aContext->selectedRoutes, name, (int(*)(void*, void*))trace_has_name);
+	gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+	draw_selected_routes(aContext, aContext->cr_on_screen);	
+  }
+
+  gtk_tree_path_free(path);
+  g_free(name);
+}
+
+void routelist_tree_selection_changed(GtkTreeSelection *selection, gpointer data)
+{
+        GtkTreeIter iter;
+        GtkTreeModel *model;
+        gchar *name;
+	struct Item *aItem;
+	struct Busroute *aRoute;
+	struct Point point;
+
+        if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
+                gtk_tree_model_get (model, &iter, COLUMN_NAME, &name, -1);
+		aItem = duallist_find(&aContext->selectedRoutes, name, (int(*)(void*, void*))route_has_name);
+		if(aItem != NULL) {
+			aRoute = (struct Busroute*)aItem->datap;
+			gps_to_canvas(&aContext->canvasWindow, (aRoute->box.xmin+aRoute->box.xmax)/2, (aRoute->box.ymin+aRoute->box.ymax)/2, &(point.x), &(point.y));
+			if(point.x > aContext->screenX+MARGIN && point.x < aContext->screenX+aContext->screenWidth-MARGIN && point.y > aContext->screenY+MARGIN && point.y < aContext->screenY+aContext->screenHeight-MARGIN) {
+			} else {
+				setup_screen(aContext, MAX(point.x-0.5*aContext->screenWidth, -MARGIN), MAX(point.y-0.5*aContext->screenHeight, -MARGIN));
+				draw_screen(aContext);
+			}
+		}
+                g_free (name);
+        }
+
+}
+
+gboolean select_all_route(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	struct Item *aItem;
+	struct Busroute *aRoute;
+
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+		unsigned long at;
+		for (at = 0; at<aContext->routeTable.size;at++) {
+			aItem = aContext->routeTable.head[at];
+			while(aItem != NULL) {
+				aRoute = (struct Busroute*)aItem->datap;
+				duallist_add_to_tail(&aContext->selectedRoutes, aRoute);
+				draw_single_route(aContext, aContext->cr_on_screen, aRoute);
+				aItem = aItem->next;
+			}
+		}
+	} else {
+		while(!is_duallist_empty(&aContext->selectedRoutes)) {
+			aRoute = duallist_pick_head(&aContext->selectedRoutes);
+		}
+		gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+		/* draw bus routes */
+		draw_selected_routes(aContext, aContext->cr_on_screen);
+
+	}
+	return TRUE;
+}
+
+/* traces */
+
+void trace_selected(GtkCellRendererToggle *cell, gchar *path_str, gpointer data)
+{
+  GtkTreeModel *model = (GtkTreeModel *)data;
+  GtkTreeIter  iter;
+  GtkTreePath *path = gtk_tree_path_new_from_string (path_str);
+  gboolean toDraw;
+  gchar* name;
+  struct Item *aItem;
+  struct Item *bItem;
+  struct Trace *aTrace;
+
+  // get toggled iter 
+  gtk_tree_model_get_iter (model, &iter, path);
+  gtk_tree_model_get (model, &iter, COLUMN_TODRAW, &toDraw, COLUMN_NAME, &name, -1);
+
+  // do something with the value 
+  toDraw ^= 1;
+
+  // set new value 
+  gtk_list_store_set (GTK_LIST_STORE (model), &iter, COLUMN_TODRAW, toDraw, -1);
+  if(toDraw != FALSE) {
+	aItem = hashtable_find(&aContext->traceTable, name);
+
+	aTrace = (struct Trace*)aItem->datap;
+	duallist_add_to_tail(&aContext->selectedTraces, aTrace);
+
+	bItem = aTrace->reports.head;
+	while(bItem!=NULL && ((struct Report*)bItem->datap)->timestamp < aContext->atClock) 
+		bItem = bItem->next;
+	aTrace->at = bItem;
+	if(aTrace->at != NULL)
+		aTrace->countdown = ((struct Report*)bItem->datap)->timestamp - aContext->atClock;
+	else
+		aTrace->countdown =  -1;
+
+	aContext->focusTrace = aTrace;
+  } else {
+	aTrace = duallist_pick(&aContext->selectedTraces, name, (int(*)(void*, void*))trace_has_name);
+	bItem = aTrace->reports.head;
+	while(bItem != NULL) {
+		((struct Report*)bItem->datap)->shown = 0;
+		bItem = bItem->next;
+	}
+	gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+	draw_displayed_traces(aContext, aContext->cr_on_screen);	
+  }
+
+  gtk_tree_path_free(path);
+  g_free(name);
+}
+
+void tracelist_tree_selection_changed(GtkTreeSelection *selection, gpointer data)
+{
+        GtkTreeIter iter;
+        GtkTreeModel *model;
+        gchar *name;
+	struct Item *aItem;
+
+        if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
+                gtk_tree_model_get (model, &iter, COLUMN_NAME, &name, -1);
+		aItem = duallist_find(&aContext->selectedTraces, name, (int(*)(void*, void*))trace_has_name);
+		if(aItem != NULL)
+			aContext->focusTrace = (struct Trace*)aItem->datap;
+                g_free (name);
+        }
+
+}
+
+gboolean select_all_trace(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	struct Item *aItem;
+	struct Trace *aTrace;
+	struct Item *bItem;
+
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+		unsigned long at;
+		for (at = 0; at<aContext->traceTable.size;at++) {
+			aItem = aContext->traceTable.head[at];
+			while(aItem != NULL) {
+				aTrace = (struct Trace*)aItem->datap;
+				duallist_add_to_tail(&aContext->selectedTraces, aTrace);
+
+				bItem = aTrace->reports.head;
+				while(bItem!=NULL && ((struct Report*)bItem->datap)->timestamp < aContext->atClock) 
+					bItem = bItem->next;
+				aTrace->at = bItem;
+				if(bItem != NULL)
+					aTrace->countdown = ((struct Report*)bItem->datap)->timestamp - aContext->atClock;
+				else
+					aTrace->countdown =  -1;
+
+				aContext->focusTrace = aTrace;
+				aItem = aItem->next;
+			}
+		}
+	} else {
+		while(!is_duallist_empty(&aContext->selectedTraces)) {
+			aTrace = duallist_pick_head(&aContext->selectedTraces);
+			bItem = aTrace->reports.head;
+			while(bItem != NULL) {
+				((struct Report*)bItem->datap)->shown = 0;
+				bItem = bItem->next;
+			}
+		}
+		gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+		draw_displayed_traces(aContext, aContext->cr_on_screen);	
+	}
+	return TRUE;
+}
+
+
+void pair_selected(GtkCellRendererToggle *cell, gchar *path_str, gpointer data)
+{
+  GtkTreeModel *model = (GtkTreeModel *)data;
+  GtkTreeIter  iter;
+  GtkTreePath *path = gtk_tree_path_new_from_string (path_str);
+  gboolean toDraw;
+  gchar* name;
+  struct Item *aItem;
+  struct Item *bItem;
+  struct Pair *aPair;
+
+  // get toggled iter 
+  gtk_tree_model_get_iter (model, &iter, path);
+  gtk_tree_model_get (model, &iter, COLUMN_TODRAW, &toDraw, COLUMN_NAME, &name, -1);
+
+  // do something with the value 
+  toDraw ^= 1;
+
+  // set new value 
+  gtk_list_store_set (GTK_LIST_STORE (model), &iter, COLUMN_TODRAW, toDraw, -1);
+  if(toDraw != FALSE) {
+	aItem = hashtable_find(&aContext->pairTable, name);
+
+	aPair = (struct Pair*)aItem->datap;
+	duallist_add_to_tail(&aContext->selectedPairs, aPair);
+	bItem = aPair->contents.head;
+	while(bItem!=NULL && ((struct Contact*)bItem->datap)->startAt < aContext->atClock) 
+		bItem = bItem->next;
+	aPair->at = bItem;
+	if(aPair->at != NULL)
+		aPair->countdown = ((struct Contact*)bItem->datap)->startAt - aContext->atClock;
+	else
+		aPair->countdown =  -1;
+
+//	aContext->focusPair = aPair;
+  } else {
+	aPair = duallist_pick(&aContext->selectedPairs, name, (int(*)(void*, void*))pair_has_names);
+	bItem = aPair->contents.head;
+	while(bItem != NULL) {
+		((struct Contact*)bItem->datap)->shown = 0;
+		bItem = bItem->next;
+	}
+	gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+	draw_displayed_traces(aContext, aContext->cr_on_screen);	
+  }
+
+  gtk_tree_path_free(path);
+  g_free(name);
+}
+
+
+
+void pairlist_tree_selection_changed(GtkTreeSelection *selection, gpointer data)
+{
+        GtkTreeIter iter;
+        GtkTreeModel *model;
+        gchar *name;
+	struct Item *aItem;
+
+        if (gtk_tree_selection_get_selected (selection, &model, &iter)) {
+                gtk_tree_model_get (model, &iter, COLUMN_NAME, &name, -1);
+		aItem = duallist_find(&aContext->selectedTraces, name, (int(*)(void*, void*))pair_has_names);
+		if(aItem != NULL)
+//			aContext->focusPair = (struct Pair*)aItem->datap;
+                g_free (name);
+        }
+
+}
+
+
+gboolean select_all_pair(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	struct Item *aItem;
+	struct Pair *aPair;
+	struct Item *bItem;
+
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+		unsigned long at;
+		for (at = 0; at<aContext->pairTable.size;at++) {
+			aItem = aContext->pairTable.head[at];
+			while(aItem != NULL) {
+				aPair = (struct Pair*)aItem->datap;
+				duallist_add_to_tail(&aContext->selectedPairs, aPair);
+
+				bItem = aPair->contents.head;
+				while(bItem!=NULL && ((struct Contact*)bItem->datap)->startAt < aContext->atClock) 
+					bItem = bItem->next;
+				aPair->at = bItem;
+				if(bItem != NULL)
+					aPair->countdown = ((struct Contact*)bItem->datap)->startAt - aContext->atClock;
+				else
+					aPair->countdown =  -1;
+
+//				aContext->focusPair = aPair;
+				aItem = aItem->next;
+			}
+		}
+	} else {
+		while(!is_duallist_empty(&aContext->selectedPairs)) {
+			aPair = duallist_pick_head(&aContext->selectedPairs);
+			bItem = aPair->contents.head;
+			while(bItem != NULL) {
+				((struct Contact*)bItem->datap)->shown = 0;
+				bItem = bItem->next;
+			}
+		}
+		gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+		draw_displayed_traces(aContext, aContext->cr_on_screen);	
+	}
+	return TRUE;
+}
+
+gboolean draw_rsu_topology(GtkWidget *widget, GdkEventButton *event, gpointer data)
+{
+	if(gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget))) {
+		draw_links(aContext);
+		draw_rsus(aContext);
+	} else {
+		gdk_draw_drawable(aContext->drawingArea->window, aContext->gc, aContext->canvas, 0, 0, 0, 0, -1, -1);
+		draw_displayed_traces(aContext, aContext->cr_on_screen);	
+	}
+	draw_yardstick_on_screen(aContext);
+	return TRUE;
+}
+
+gboolean draw_forward(gpointer data)
+{
+	struct Point point;
+	char attime[32];
+	char buf[64];
+	struct Item *aItem;
+	struct Trace *aSelectedTrace;
+	struct Pair *aSelectedPair;
+  	struct RGBO color;
+	struct Report *lastReport;
+	struct Contact *lastContact;
+	struct Cell *aCell;
+	unsigned long i;
+
+	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON((GtkWidget*)data)) ) {
+		ttostr(aContext->atClock, attime);
+		sprintf(buf, "Clock: %s (%u)", attime, (unsigned)aContext->atClock);
+		draw_text_on_screen(aContext, buf, MARGIN+20, MARGIN+20, FONT_SIZE);
+
+		/* display cell dynamic displays */
+		
+		for(i = 0; i<aContext->cellTable.size; i++) {
+			aItem = aContext->cellTable.head[i];
+			while (aItem!=NULL)
+			{
+				aCell = (struct Cell*)aItem->datap;
+				if(aCell->at != NULL && aCell->countdown == 0) {
+					do {
+						if( aCell->at == aCell->displays.head
+						 || (aCell->at != aCell->displays.head
+						 && ((struct Display*)aCell->at->datap)->value != ((struct Display*)aCell->at->prev->datap)->value)) {
+							draw_cell_display(aContext, aContext->cr_on_screen, aCell);
+						} 
+						aCell->at = aCell->at->next;
+					} while(aCell->at != NULL && ((struct Display*)aCell->at->datap)->timestamp == ((struct Display*)aCell->at->prev->datap)->timestamp);
+
+					if (aCell->at != NULL)
+						aCell->countdown = difftime(((struct Display*)aCell->at->datap)->timestamp, aContext->atClock);
+					else
+						aCell->countdown = -1;
+				} else if (aCell->at != NULL && aCell->countdown > 0) 
+					aCell->countdown --;
+
+				aItem = aItem->next;
+			}
+		}
+
+
+		/*play GPS reports*/
+		aItem = aContext->selectedTraces.head;
+		while(aItem != NULL) {
+			aSelectedTrace = (struct Trace*)aItem->datap;
+			if(aSelectedTrace->at != NULL && aSelectedTrace->countdown == 0) {
+				do {
+					if( aSelectedTrace == aContext->focusTrace) {
+						gps_to_canvas(&aContext->canvasWindow, ((struct Report*)aContext->focusTrace->at->datap)->gPoint.x, ((struct Report*)aContext->focusTrace->at->datap)->gPoint.y, &(point.x), &(point.y));
+						if(point.x > aContext->screenX+MARGIN && point.x < aContext->screenX+aContext->screenWidth-MARGIN && point.y > aContext->screenY+MARGIN && point.y < aContext->screenY+aContext->screenHeight-MARGIN) {
+						} else {
+							setup_screen(aContext, MAX(point.x-0.5*aContext->screenWidth, -MARGIN), MAX(point.y-0.5*aContext->screenHeight, -MARGIN));
+							draw_screen(aContext);
+						}
+					}
+					if(aSelectedTrace->at!=aSelectedTrace->reports.head) {
+						lastReport = (struct Report*)aSelectedTrace->at->prev->datap;
+						draw_single_report(aContext, aContext->cr_on_screen, lastReport, &aSelectedTrace->color.rgbo);
+					} 
+					color.red = 255, color.green = 255, color.blue = 0, color.opacity = 255;
+					draw_single_report(aContext, aContext->cr_on_screen, (struct Report*)aSelectedTrace->at->datap, &color);
+					((struct Report*)aSelectedTrace->at->datap)->shown = 1;
+					aSelectedTrace->at = aSelectedTrace->at->next;
+				} while(aSelectedTrace->at != NULL && ((struct Report*)aSelectedTrace->at->datap)->timestamp == ((struct Report*)aSelectedTrace->at->prev->datap)->timestamp);
+
+				if (aSelectedTrace->at != NULL)
+					aSelectedTrace->countdown = difftime(((struct Report*)aSelectedTrace->at->datap)->timestamp, aContext->atClock);
+				else
+					aSelectedTrace->countdown = -1;
+			} else if (aSelectedTrace->at != NULL && aSelectedTrace->countdown > 0) 
+				aSelectedTrace->countdown --;
+			aItem = aItem->next;
+		}
+
+
+		/* play contacts */
+		aItem = aContext->selectedPairs.head;
+		while(aItem != NULL) {
+			aSelectedPair = (struct Pair*)aItem->datap;
+			if(aSelectedPair->at != NULL && aSelectedPair->countdown == 0) {
+				do {
+					if( aSelectedPair == aContext->focusPair) {
+						gps_to_canvas(&aContext->canvasWindow, ((struct Contact*)aContext->focusPair->at->datap)->gPoint.x, ((struct Contact*)aContext->focusPair->at->datap)->gPoint.y, &(point.x), &(point.y));
+						if(point.x > aContext->screenX+MARGIN && point.x < aContext->screenX+aContext->screenWidth-MARGIN && point.y > aContext->screenY+MARGIN && point.y < aContext->screenY+aContext->screenHeight-MARGIN) {
+						} else {
+							setup_screen(aContext, MAX(point.x-0.5*aContext->screenWidth, -MARGIN), MAX(point.y-0.5*aContext->screenHeight, -MARGIN));
+							draw_screen(aContext);
+						}
+					}
+					if( aSelectedPair->at!=aSelectedPair->contents.head) {
+						lastContact = (struct Contact*)aSelectedPair->at->prev->datap;
+						draw_single_contact(aContext, aContext->cr_on_screen, lastContact, &aSelectedPair->color.rgbo);
+					} 
+					color.red = 255, color.green = 255, color.blue = 0, color.opacity = 255;
+					draw_single_contact(aContext, aContext->cr_on_screen, (struct Contact*)aSelectedPair->at->datap, &color);
+					((struct Contact*)aSelectedPair->at->datap)->shown = 1;
+					aSelectedPair->at = aSelectedPair->at->next;
+				} while(aSelectedPair->at != NULL && ((struct Contact*)aSelectedPair->at->datap)->startAt == ((struct Contact*)aSelectedPair->at->prev->datap)->startAt);
+
+				if (aSelectedPair->at != NULL)
+					aSelectedPair->countdown = difftime(((struct Contact*)aSelectedPair->at->datap)->startAt, aContext->atClock);
+				else
+					aSelectedPair->countdown = -1;
+			} else if (aSelectedPair->at != NULL && aSelectedPair->countdown > 0) 
+				aSelectedPair->countdown --;
+			aItem = aItem->next;
+		}
+
+
+		aContext->atClock ++;
+	}
+
+	if(aContext->atClock > aContext->endAt) {
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON((GtkWidget*)data), FALSE);
+		return TRUE;
+	}
+	return TRUE;
+}
+
+
+gboolean draw_backward(gpointer data)
+{
+	struct Point point;
+	char attime[32];
+	char buf[64];
+	struct Item *aItem;
+	struct Trace *aSelected;
+  	struct RGBO color;
+	struct Report *lastReport;
+
+	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON((GtkWidget*)data)) ) {
+		ttostr(aContext->atClock, attime);
+		sprintf(buf, "Clock: %s (%u)", attime, (unsigned)aContext->atClock);
+		draw_text_on_screen(aContext, buf, MARGIN+20, MARGIN+20, FONT_SIZE);
+
+		aItem = aContext->selectedTraces.head;
+		while(aItem != NULL) {
+			aSelected = (struct Trace*)aItem->datap;
+			if(aSelected->at != NULL && aSelected->countdown == 0) {
+				while(difftime(((struct Report*)aSelected->at->datap)->timestamp, aContext->atClock) == 0) {
+					if( aSelected == aContext->focusTrace) {
+						gps_to_canvas(&aContext->canvasWindow, ((struct Report*)aContext->focusTrace->at->datap)->gPoint.x, ((struct Report*)aContext->focusTrace->at->datap)->gPoint.y, &(point.x), &(point.y));
+						if(point.x > aContext->screenX+MARGIN && point.x < aContext->screenX+aContext->screenWidth-MARGIN && point.y > aContext->screenY+MARGIN && point.y < aContext->screenY+aContext->screenHeight-MARGIN) {
+						} else {
+							setup_screen(aContext, MAX(point.x-0.5*aContext->screenWidth, -MARGIN), MAX(point.y-0.5*aContext->screenHeight, -MARGIN));
+							draw_screen(aContext);
+						}
+					}
+					if(aSelected->at->prev!=NULL) {
+						lastReport = (struct Report*)aSelected->at->prev->datap;
+						color.red = 255, color.green = 255, color.blue = 0, color.opacity = 255;
+						draw_single_report(aContext, aContext->cr_on_screen, lastReport, &color);
+					} 
+					rubber_single_report(aContext, aContext->cr_on_screen, (struct Report*)aSelected->at->datap);
+					((struct Report*)aSelected->at->datap)->shown = 0;
+					aSelected->at = aSelected->at->prev;
+				}
+				if (aSelected->at != NULL)
+					aSelected->countdown = difftime(aContext->atClock, ((struct Report*)aSelected->at->datap)->timestamp);
+				else
+					aSelected->countdown = -1;
+			} else if (aSelected->at != NULL && aSelected->countdown > 0) 
+				aSelected->countdown --;
+			aItem = aItem->next;
+		}
+		aContext->atClock --;
+	}
+
+	if(aContext->atClock < aContext->startAt) {
+		gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON((GtkWidget*)data), FALSE);
+		return TRUE;
+	}
+	return TRUE;
+}
+
+/* mouse motion event */
+gboolean
+drawing_area_motion_event (GtkWidget  *widget,
+			   GdkEventMotion *event,
+			   gpointer data)
+{
+  /* x,y is the coordinate in the virtual pixmap */
+  int x, y;
+  struct Point point;
+
+  x = event->x, y = event->y;
+  if (event->is_hint)
+	gdk_window_get_pointer(event->window, &x, &y, NULL);
+  x = x+aContext->screenX, y = y+aContext->screenY;
+ 
+  canvas_to_gps(&aContext->canvasWindow, x, y, &point.x, &point.y); 
+
+  /* the mouse is in our display area */
+  if( x>=MARGIN+aContext->screenX && x<=aContext->screenWidth-MARGIN+aContext->screenX && y>=MARGIN+aContext->screenY && y<=aContext->screenHeight-MARGIN+aContext->screenY) {
+	rub_bar(widget->window, aContext->gc, MARGIN);
+	brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	aContext->screenArea = 0;
+
+	double dist, mindist;
+	struct Segment seg;
+	struct Point interpoint;
+	struct Point aPoint;
+
+	struct Road *prevRoad = NULL;
+	struct Cell *prevCell = NULL;
+	struct Report *prevReport = NULL;
+	struct Cross *prevCross = NULL;
+
+	struct Item *aItem;
+	struct Report *aReport;
+
+	struct Item *bItem;
+	struct Road *aRoad;
+
+	struct Item *cItem;
+	struct Cell *aCell;
+
+	struct Item *dItem;
+	struct Cross *aCross;
+
+	char buf[128];
+	char attime[20];
+	struct RGBO color;
+
+	struct District *aDistrict;
+	/* show the coordinates of the mouse */
+	sprintf(buf, "(%10.6lf, %10.6lf)", point.x, point.y);
+	draw_text_on_screen(aContext, buf, aContext->screenWidth-MARGIN-200, MARGIN+20, FONT_SIZE);
+
+	/* show other objects on map*/
+	prevCell = aContext->mouseAtCell;
+
+	duallist_destroy(&aContext->screenSurroundings, NULL);
+	surroundings_from_point(&aContext->screenSurroundings, aContext->region, &point);	
+	cItem = aContext->screenSurroundings.head;
+	if(cItem == NULL) return TRUE;
+	aCell = (struct Cell*)cItem->datap;
+
+	/* selecting surrounding cells */
+	aContext->mouseAtCell = aCell;
+	if((event->state & GDK_SHIFT_MASK) == GDK_SHIFT_MASK) {
+		draw_cells(aContext, aContext->cr_on_screen);
+		return TRUE;
+	}
+
+	/* selecting district */
+	aDistrict = point_in_district(aContext->region, &point);
+	if(aDistrict != NULL && (event->state & 8)) {
+		show_district_on_screen(aContext, aDistrict, aContext->cr_on_screen);
+		return TRUE;
+	}
+
+	/* selecting a report */
+	mindist = MAXVALUE;
+	prevReport = aContext->mouseAtReport;
+	aContext->mouseAtReport = NULL;
+	aItem = aCell->reps.head;
+	while(aItem != NULL) {
+		aReport = (struct Report*)aItem->datap;
+		gps_to_canvas(&aContext->canvasWindow, aReport->gPoint.x, aReport->gPoint.y, &(aPoint.x), &(aPoint.y));
+		if((dist = distance_in_pixel(x, y, aPoint.x, aPoint.y)) < mindist && dist < RECOGNITION_GRAN && aReport->shown) {
+			mindist = dist;
+			aContext->mouseAtReport = aReport;
+		}
+		aItem = aItem->next;
+	}
+
+	if(aContext->mouseAtReport != prevReport) {
+		if(prevReport != NULL) {
+			draw_single_report(aContext, aContext->cr_on_screen, prevReport, &prevReport->fromTrace->color.rgbo);
+
+			gdk_draw_drawable(widget->window, aContext->gc, aContext->canvas, 
+					  MARGIN+20, aContext->screenHeight-MARGIN-100, 
+					  MARGIN+20, aContext->screenHeight-MARGIN-100, 
+					  400, 100);
+		}
+		if(aContext->mouseAtReport != NULL) {
+			color.red = 0;
+			color.green = 0;
+			color.blue = 0;
+			color.opacity = 255;
+			draw_single_report(aContext, aContext->cr_on_screen, aContext->mouseAtReport, &color);
+
+			sprintf(buf, "Vehicle ID: %s", aContext->mouseAtReport->fromTrace->vName);
+			draw_text_on_screen(aContext, buf, MARGIN+20, aContext->screenHeight-MARGIN-100, FONT_SIZE);
+			ttostr(aContext->mouseAtReport->timestamp, attime);
+			sprintf(buf, "timestamp: %s(%ld)", attime, aContext->mouseAtReport->timestamp);
+			draw_text_on_screen(aContext, buf, MARGIN+20, aContext->screenHeight-MARGIN-80, FONT_SIZE);
+			sprintf(buf, "speed: %d, heading: %d MsgType: %d", aContext->mouseAtReport->speed, aContext->mouseAtReport->angle, aContext->mouseAtReport->msgType);
+			draw_text_on_screen(aContext, buf, MARGIN+20, aContext->screenHeight-MARGIN-60, FONT_SIZE);
+			if(aContext->mouseAtReport->fromTrace->type == FILE_ORIGINAL_GPS_BUS ||
+			   aContext->mouseAtReport->fromTrace->type == FILE_MODIFIED_GPS_BUS) {
+				sprintf(buf, "GPS:%s Park:%s Dest:%s Way:%s Door:%s Stop:%s", 
+					(aContext->mouseAtReport->state & 0x80) == 0?"valid":"non",
+					(aContext->mouseAtReport->state & 0x40) == 0?"out":"in",
+					(aContext->mouseAtReport->state & 0x20) == 0?"no":"yes",
+					(aContext->mouseAtReport->state & 0x10) == 0?"up":"down",
+					(aContext->mouseAtReport->state & 0x08) == 0?"open":"closed",
+					(aContext->mouseAtReport->state & 0x04) == 0?"leave":"arrive");
+				draw_text_on_screen(aContext, buf, MARGIN+20, aContext->screenHeight-MARGIN-40, FONT_SIZE);
+			}
+			if(aContext->mouseAtReport->onRoad!=NULL) {
+				sprintf(buf, "onRoad: %d", ((struct CandRoad*)aContext->mouseAtReport->onRoad->datap)->aRoad->id);
+				draw_text_on_screen(aContext, buf, MARGIN+20, aContext->screenHeight-MARGIN-20, FONT_SIZE);
+			}
+		}
+	}
+
+	if((event->state & GDK_CONTROL_MASK) == GDK_CONTROL_MASK) {
+		/* selecting a cross */
+		prevCross = aContext->mouseAtCross;
+		dItem = aCell->crosses.head;
+		aContext->mouseAtCross = NULL;
+		while(dItem != NULL) {
+			aCross = (struct Cross*)dItem->datap;
+			if(point.x >= aCross->box.xmin && point.x <= aCross->box.xmax
+			&& point.y >= aCross->box.ymin && point.y <= aCross->box.ymax) {
+				aContext->mouseAtCross = aCross;
+				break;
+			}
+			dItem = dItem->next;
+		}
+
+		if(aContext->mouseAtCross != prevCross) {
+			if(prevCross != NULL) {
+				color.red = 255;
+				color.green = 255;
+				color.blue = 255;
+				color.opacity = 255;
+				draw_single_cross(aContext, aContext->cr_on_screen, prevCross, &color); 
+				
+				color.red = 255;
+				color.green = 255;
+				color.blue = 255;
+				color.opacity = 255;
+				bItem = prevCross->inRoads.head;
+				while(bItem != NULL) {
+					draw_single_road(aContext, aContext->cr_on_screen, bItem->datap, &color);
+					bItem = bItem->next;
+				}
+				bItem = prevCross->outRoads.head;
+				while(bItem != NULL) {
+					draw_single_road(aContext, aContext->cr_on_screen, bItem->datap, &color);
+					bItem = bItem->next;
+				}
+
+				gdk_draw_drawable(widget->window, aContext->gc, aContext->canvas, 
+						  aContext->screenWidth-MARGIN-200, MARGIN+40, 
+						  aContext->screenWidth-MARGIN-200, MARGIN+40, 
+						  200, 100);
+			}
+			if(aContext->mouseAtCross != NULL) {
+				if(prevRoad != NULL) {
+					color.red = 255;
+					color.green = 255;
+					color.blue = 255;
+					color.opacity = 255;
+					draw_single_road(aContext, aContext->cr_on_screen, prevRoad, &color);
+					gdk_draw_drawable(widget->window, aContext->gc, aContext->canvas, 
+							  aContext->screenWidth-MARGIN-200, MARGIN+40, 
+							  aContext->screenWidth-MARGIN-200, MARGIN+40, 
+							  200, 100);
+				}
+				sprintf(buf, "Cross No. %d", aContext->mouseAtCross->number);
+				draw_text_on_screen(aContext, buf, aContext->screenWidth-MARGIN-200, MARGIN+40, FONT_SIZE);
+
+				color.red = 200;
+				color.green = 100;
+				color.blue = 100;
+				color.opacity = 255;
+				draw_single_cross(aContext, aContext->cr_on_screen, aContext->mouseAtCross, &color); 
+
+				color.red = 200;
+				color.green = 50;
+				color.blue = 50;
+				color.opacity = 255;
+				bItem = aContext->mouseAtCross->inRoads.head;
+				while(bItem != NULL) {
+					draw_single_road(aContext, aContext->cr_on_screen, bItem->datap, &color);
+					bItem = bItem->next;
+				}
+				bItem = aContext->mouseAtCross->outRoads.head;
+				while(bItem != NULL) {
+					draw_single_road(aContext, aContext->cr_on_screen, bItem->datap, &color);
+					bItem = bItem->next;
+				}
+
+			}
+		}
+
+
+		/* selecting a road */
+		/* when the mouse is in a cross, there should be no road being selected */
+		if(aContext->mouseAtCross == NULL) {
+			mindist = MAXVALUE;
+			prevRoad = aContext->mouseAtRoad;
+			aContext->mouseAtRoad = NULL;
+			bItem = aCell->roads.head;
+			while( bItem != NULL) {
+				aRoad = (struct Road*)bItem->datap;
+				if(is_point_in_box(&point, &aRoad->box)) {
+					  dist = dist_point_to_polyline(&point, &aRoad->points, &interpoint, &seg);
+					  if (dist< mindist && dist < RECOGNITION_GRAN) {
+						  mindist = dist;
+						  aContext->mouseAtRoad = aRoad;
+					  }
+				} 
+				bItem = bItem->next;
+			}
+
+			if(prevRoad != NULL) {
+				color.red = 255;
+				color.green = 255;
+				color.blue = 255;
+				color.opacity = 255;
+				draw_single_road(aContext, aContext->cr_on_screen, prevRoad, &color);
+
+				gdk_draw_drawable(widget->window, aContext->gc, aContext->canvas, 
+						  aContext->screenWidth-MARGIN-200, MARGIN+40, 
+						  aContext->screenWidth-MARGIN-200, MARGIN+40, 
+						  200, 100);
+			}
+			if(aContext->mouseAtRoad != NULL) {
+				color.red = 0; 
+				color.green = 0;
+				color.blue = 0;
+				color.opacity = 255;
+				draw_single_road(aContext, aContext->cr_on_screen, aContext->mouseAtRoad, &color);
+
+				sprintf(buf, "Road No. %d, Length: %.2fKM", aContext->mouseAtRoad->id, aContext->mouseAtRoad->length/1000);
+				draw_text_on_screen(aContext, buf, aContext->screenWidth-MARGIN-200, MARGIN+40, FONT_SIZE);
+				sprintf(buf, "Head angle: %d, Tail angle: %d", aContext->mouseAtRoad->headEndAngle, aContext->mouseAtRoad->tailEndAngle);
+				draw_text_on_screen(aContext, buf, aContext->screenWidth-MARGIN-200, MARGIN+65, FONT_SIZE);
+				sprintf(buf, "[%.3lf %.3lf %.3lf %.3lf]", aContext->mouseAtRoad->box.xmin,
+									  aContext->mouseAtRoad->box.ymin,
+									  aContext->mouseAtRoad->box.xmax,
+									  aContext->mouseAtRoad->box.ymax);
+				draw_text_on_screen(aContext, buf, aContext->screenWidth-MARGIN-200, MARGIN+90, FONT_SIZE);
+			}
+			
+		}
+	}				
+
+  } else if(x>aContext->screenX && x<MARGIN+aContext->screenX&&y>aContext->screenHeight/4+aContext->screenY&&y<3*aContext->screenHeight/4+aContext->screenY) {
+	if(aContext->screenArea != 1) {
+		aContext->screenArea = 1;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if((x>aContext->screenX && x<MARGIN+aContext->screenX&&y>3*aContext->screenHeight/4+aContext->screenY&&y<aContext->screenHeight-MARGIN+aContext->screenY) || (x>aContext->screenX && x<aContext->screenWidth/4+aContext->screenX&&y>=aContext->screenHeight-MARGIN+aContext->screenY&&y<aContext->screenHeight+aContext->screenY)) {
+	if(aContext->screenArea != 2) {
+		aContext->screenArea = 2;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if(x>aContext->screenWidth/4+aContext->screenX && x<3*aContext->screenWidth/4+aContext->screenX&&y>aContext->screenHeight-MARGIN+aContext->screenY&&y<aContext->screenHeight+aContext->screenY) {
+	if(aContext->screenArea != 3) {
+		aContext->screenArea = 3;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+  } else if((x>aContext->screenWidth*3/4+aContext->screenX && x<aContext->screenWidth+aContext->screenX&&y>aContext->screenHeight-MARGIN+aContext->screenY&&y<aContext->screenHeight+aContext->screenY) || (x>aContext->screenWidth-MARGIN+aContext->screenX&&x<aContext->screenWidth+aContext->screenX&&y>aContext->screenHeight*3/4+aContext->screenY&&y<aContext->screenHeight+aContext->screenY)) {
+	if(aContext->screenArea != 4) {
+		aContext->screenArea = 4;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+  } else if(x>aContext->screenWidth-MARGIN+aContext->screenX&&x<aContext->screenWidth+aContext->screenX&&y<aContext->screenHeight*3/4+aContext->screenY&&y>aContext->screenHeight/4+aContext->screenY) {
+	if(aContext->screenArea != 5) {
+		aContext->screenArea = 5;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+  } else if((x>aContext->screenWidth-MARGIN+aContext->screenX&&x<aContext->screenWidth+aContext->screenX&&y>MARGIN+aContext->screenY&&y<aContext->screenHeight/4+aContext->screenY) || (x>aContext->screenWidth*3/4+aContext->screenX&&x<aContext->screenWidth+aContext->screenX&&y>aContext->screenY&&y<MARGIN+aContext->screenY)) {
+	if(aContext->screenArea != 6) {
+		aContext->screenArea = 6;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+  } else if(x>aContext->screenWidth/4+aContext->screenX&& x<aContext->screenWidth*3/4+aContext->screenX&&y>aContext->screenY&&y<MARGIN+aContext->screenY) {
+	if(aContext->screenArea != 7) {
+		aContext->screenArea = 7;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+  } else if((x>aContext->screenX && x<aContext->screenWidth/4+aContext->screenX&&y>aContext->screenY&&y<MARGIN+aContext->screenY) || (x>aContext->screenX&&x<MARGIN+aContext->screenX&&y>MARGIN+aContext->screenY&&y<aContext->screenHeight/4+aContext->screenY)) {
+	if(aContext->screenArea != 8) {
+		aContext->screenArea = 8;
+		rub_bar(widget->window, aContext->gc, MARGIN);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+  }
+  return TRUE;
+}
+
+
+gboolean
+drawing_area_button_press_event (GtkWidget *widget,
+				 GdkEventButton *event,
+				 gpointer data)
+{
+  if(aContext->screenArea == 0) {
+	  /* zoom in */
+	  if(event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+		aContext->scale = aContext->scale * ZOOM_SCALE;
+		aContext->canvasWindow.sBox.xmax = aContext->canvasWindow.sBox.xmax*ZOOM_SCALE;
+		aContext->canvasWindow.sBox.ymax = aContext->canvasWindow.sBox.ymax*ZOOM_SCALE;
+		setup_context(aContext, NULL);
+  		draw_canvas(aContext);
+		setup_screen(aContext, MAX((event->x+aContext->screenX)*ZOOM_SCALE-0.5*aContext->screenWidth, -MARGIN), MAX((event->y+aContext->screenY)*ZOOM_SCALE-0.5*aContext->screenHeight, -MARGIN));
+		draw_screen(aContext);
+	  }
+
+	  /*zoom out*/
+	  if(event->type == GDK_2BUTTON_PRESS && event->button == 3) {
+		if( aContext->scale >= 1) {
+			aContext->scale /= ZOOM_SCALE;
+			aContext->canvasWindow.sBox.xmax = aContext->canvasWindow.sBox.xmax/ZOOM_SCALE;
+			aContext->canvasWindow.sBox.ymax = aContext->canvasWindow.sBox.ymax/ZOOM_SCALE;
+			setup_context(aContext, NULL);
+			draw_canvas(aContext);
+			setup_screen(aContext, MAX((event->x+aContext->screenX)/ZOOM_SCALE-0.5*aContext->screenWidth, -MARGIN), MAX((event->y+aContext->screenY)/ZOOM_SCALE-0.5*aContext->screenHeight, -MARGIN));
+			draw_screen(aContext);
+		}
+	  }
+
+  } else if (aContext->screenArea == 1) {
+	int delta = MIN(aContext->screenX+MARGIN, aContext->screenWidth/MOVE_PACE);
+	if (delta > 0) {	
+		setup_screen(aContext, aContext->screenX-delta, NOTSET);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 2) {
+	int deltax = MIN(aContext->screenX+MARGIN, aContext->screenWidth/MOVE_PACE);
+	int deltay = MIN(aContext->canvasWindow.sBox.ymax-aContext->screenY-aContext->screenHeight+MARGIN, aContext->screenHeight/4);
+	if(deltax > 0 || deltay > 0) {
+		setup_screen(aContext, aContext->screenX-deltax, aContext->screenY+deltay);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 3) {
+	int delta = MIN(aContext->canvasWindow.sBox.ymax-aContext->screenY-aContext->screenHeight+MARGIN, aContext->screenHeight/MOVE_PACE);
+	if (delta > 0) {		 
+		setup_screen(aContext, NOTSET, aContext->screenY+delta);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 4) {
+	int deltax = MIN(aContext->canvasWindow.sBox.xmax-aContext->screenX-aContext->screenWidth+MARGIN, aContext->screenWidth/MOVE_PACE);
+	int deltay = MIN(aContext->canvasWindow.sBox.ymax-aContext->screenY-aContext->screenHeight+MARGIN, aContext->screenHeight/MOVE_PACE);
+	if(deltax > 0 || deltay > 0) {
+		setup_screen(aContext, aContext->screenX+deltax, aContext->screenY+deltay);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 5) {
+	int delta = MIN(aContext->canvasWindow.sBox.xmax-aContext->screenX-aContext->screenWidth+MARGIN, aContext->screenWidth/MOVE_PACE);
+	if (delta > 0) {		 
+		setup_screen(aContext, aContext->screenX+delta, NOTSET);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 6) {
+	int deltax = MIN(aContext->canvasWindow.sBox.xmax-aContext->screenX-aContext->screenWidth+MARGIN, aContext->screenWidth/MOVE_PACE);
+	int deltay = MIN(aContext->screenY+MARGIN, aContext->screenHeight/MOVE_PACE);
+	if(deltax > 0 || deltay > 0) {
+		setup_screen(aContext, aContext->screenX+deltax, aContext->screenY-deltay);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 7) {
+	int delta = MIN(aContext->screenY+MARGIN, aContext->screenHeight/MOVE_PACE);
+	if (delta > 0) {		 
+		setup_screen(aContext, NOTSET, aContext->screenY-delta);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  } else if (aContext->screenArea == 8) {
+	int deltax = MIN(aContext->screenX+MARGIN, aContext->screenWidth/MOVE_PACE);
+	int deltay = MIN(aContext->screenY+MARGIN, aContext->screenHeight/MOVE_PACE);
+	if(deltax > 0 || deltay > 0) {
+		setup_screen(aContext, aContext->screenX-deltax, aContext->screenY-deltay);
+		draw_screen(aContext);
+		brush_bar(widget->window, aContext->gc, MARGIN, aContext->screenArea);
+	}
+
+  }
+  return TRUE;
+}
+
+
+/* Create a new pixmap of the appropriate size to store our map */
+gboolean
+drawing_area_configure_event (GtkWidget *widget,
+			      GdkEventConfigure *event,
+			      gpointer data)
+{
+  struct WindowSize awin;
+
+  aContext->screenWidth = aContext->drawingArea->allocation.width;
+  aContext->screenHeight = aContext->drawingArea->allocation.height;
+
+  if(aContext->firstShown ) {
+	  awin.cBox.xmin = aContext->region->chosen_polygon->box.xmin;
+	  awin.cBox.xmax = aContext->region->chosen_polygon->box.xmax;
+	  awin.cBox.ymin = aContext->region->chosen_polygon->box.ymin;
+	  awin.cBox.ymax = aContext->region->chosen_polygon->box.ymax;
+
+	  awin.sBox.xmin = 0;
+	  awin.sBox.ymin = 0;
+	  awin.sBox.xmax =aContext->screenWidth-2*MARGIN;
+	  awin.sBox.ymax =aContext->screenHeight-2*MARGIN;
+
+	  setup_context(aContext, &awin);
+  	  draw_canvas(aContext);
+    	  setup_screen(aContext, -MARGIN, -MARGIN);
+
+	  aContext->firstShown = 0;
+  }  
+
+  return TRUE;
+}
+
+
+gboolean
+drawing_area_expose_event (GtkWidget *widget,
+			   GdkEventExpose *event,
+			   gpointer data)
+{
+  draw_screen(aContext);
+  brush_bar(widget->window, aContext->gc, MARGIN, 0);
+  return FALSE;
+}
+
