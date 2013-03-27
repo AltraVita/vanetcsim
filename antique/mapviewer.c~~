@@ -1,0 +1,476 @@
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <math.h>
+#include "color.h"
+#include "common.h"
+#include "files.h"
+#include "gtk_cairo.h"
+#include "events.h"
+#include "trace.h"
+#include "contact.h"
+#include "busroute.h"
+
+
+struct Context *aContext = NULL;
+
+/* Our main function */
+int main( int   argc,
+          char *argv[] )
+{
+  GdkScreen *screen;
+  GtkWidget *mainWindow,*mainVBox;
+  GtkWidget *controlHBox, *drawingAreaFrame;
+  GtkWidget *controlInternalVBox, *roadListSW, *traceInternalVBox, *pairInternalVBox, *routeInternalVBox;
+  GtkWidget *playHBox, *fromInputHBox, *untilInputHBox;
+  GtkWidget *fastBackwardButton, *backwardButton, *forwardButton, *fastForwardButton, *replayButton;
+  GtkWidget *fromLabel, *fromEntry, *untilLabel, *untilEntry;
+  GtkWidget *roadListTV;
+  GtkWidget *traceListSW, *selectAllTraceButton;
+  GtkWidget *traceListTV;
+  GtkWidget *pairListSW, *selectAllPairButton;
+  GtkWidget *pairListTV;
+  GtkWidget *routeListSW, *selectAllRouteButton;
+  GtkWidget *routeListTV;
+  GtkWidget *drawRsuTopoButton;
+  GtkWidget *drawingArea;
+
+  GtkTreeIter iter;
+  GtkListStore *roadListStore, *routeListStore, *traceListStore, *pairListStore;
+  GtkTreeModel *roadListTVModel, *routeListTVModel, *traceListTVModel, *pairListTVModel;
+  GtkCellRenderer *roadListRenderer, *routeListRenderer, *traceListRenderer, *pairListRenderer;
+  GtkTreeViewColumn *roadListTVColumn, *routeListTVColumn, *traceListTVColumn, *pairListTVColumn;
+  GtkTreeSelection *roadListTreeSelect, *routeListTreeSelect, *traceListTreeSelect, *pairListTreeSelect;
+
+  char buf[128];
+  FILE *fsource;
+  gint screenheight, screenwidth;
+  struct Item *aRouteItem;
+  struct Item *aTraceItem;
+  struct Item *aRoadItem;
+  struct Item *aPairItem;
+  time_t startAt, endAt;
+ 
+  char first;
+  unsigned long at;
+
+
+  if(argc < 2) {
+	g_print("Usage: %s .map [-r bus.rts] [-c colormap] [-v .vmap] [.lst .cont .ogd .dsp ...]\n", argv[0]);
+	exit(1);
+  }
+
+  if((fsource=fopen(argv[1], "rb"))!=NULL) {
+	g_print("Loading map ...\n");
+	aContext = (struct Context*)malloc(sizeof(struct Context));
+	init_context(aContext);
+	aContext->region = region_load_func(fsource, NULL, -1, -1);
+	fclose(fsource);
+  }
+
+  while(argc>2 && argv[2][0] == '-') {
+	switch(argv[2][1]) {
+	case 'r':
+		if((fsource=fopen(argv[3], "r"))!=NULL) {
+			g_print("Loading bus routes ...\n");
+			load_route_with_hashtable(fsource, aContext->region, &aContext->routeTable);
+		}
+		argc-=2;
+		argv+=2;
+		break;
+	case 'c':
+		aContext->colormap = load_colormap(argv[3]);
+		argc-=2;
+		argv+=2;
+		break;
+
+	case 'v':
+  		if((fsource=fopen(argv[3], "rb"))!=NULL) {
+			g_print("Loading RSU topology in .vmap ...\n");
+			aContext->vRegion = region_load_func(fsource, NULL, -1, -1);
+			fclose(fsource);
+		}
+		argc-=2;
+		argv+=2;
+		break;
+
+	default:
+		g_print("Usage: %s .map [-r bus.rts] [-c colormap] [-v .vmap] [.lst .cont .ogd .dsp ...]\n", argv[0]);
+	}
+  }
+
+
+
+  srand(time(NULL));
+
+  first = 1;
+  while(argc>2) {
+	if((fsource=fopen(argv[2], "r"))!=NULL) {
+		printf("Loading %s file ...\n", argv[2]);
+		load_source_file(fsource, aContext->region, &aContext->traceTable, (void*(*)(int, FILE*, struct Region *, void *, time_t *, time_t *, struct Box *))load_trace_with_hashtable, NULL, NULL, &aContext->pairTable, (void*(*)(FILE*, void *, time_t *, time_t *))load_contacts_with_hashtable, &aContext->cellTable, (void*(*)(FILE*, struct Region*, void *, time_t *, time_t *))load_cell_displays_with_hashtable, NULL, NULL, &startAt, &endAt, NULL);
+		fclose(fsource);
+	}
+
+	if(first) {
+		aContext->startAt = startAt;
+		aContext->endAt = endAt;
+		first --;
+	} else {
+		if (startAt < aContext->startAt)
+			aContext->startAt = startAt;
+		if (endAt > aContext->endAt)
+			aContext->endAt = endAt;
+	}
+	argc--;
+	argv++;
+  }
+
+  printf("Decorating windows, please wait ...\n");
+  aContext->atClock = aContext->startAt;
+  if(aContext->cellTable.count > 0)
+	set_cell_table_time(&aContext->cellTable, aContext->atClock);
+
+  gtk_init(&argc, &argv);
+
+
+  /* all widget stuff */
+  mainWindow = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  gtk_window_set_title(GTK_WINDOW(mainWindow), "Urban Vehicular Ad hoc Network Viewer");
+  g_signal_connect(mainWindow, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+  gtk_container_set_border_width(GTK_CONTAINER(mainWindow), 4);
+
+  /* vbox for control and drawing areas */
+  mainVBox = gtk_vbox_new (FALSE, 8);
+  gtk_container_set_border_width(GTK_CONTAINER(mainVBox), 4); 
+  gtk_container_add (GTK_CONTAINER(mainWindow), mainVBox);
+
+  /* hbox for control area */
+  controlHBox = gtk_hbox_new(FALSE, 5);
+
+  /* vbox for internal layout within control area */ 
+  controlInternalVBox = gtk_vbox_new(FALSE, 5);
+  gtk_box_pack_start(GTK_BOX(controlHBox), controlInternalVBox, FALSE, FALSE, 0);
+
+  /* trace play control buttons */
+  playHBox = gtk_hbox_new (FALSE, 5);
+  gtk_box_pack_start(GTK_BOX(controlInternalVBox), playHBox, FALSE, FALSE, 0);
+ 
+  fastBackwardButton = gtk_button_new_with_label ("<<");
+  gtk_box_pack_start (GTK_BOX(playHBox), fastBackwardButton, FALSE, FALSE, 0);
+  g_signal_connect (G_OBJECT (fastBackwardButton), "clicked",
+		    G_CALLBACK (fast_backward), NULL);
+
+  backwardButton = gtk_toggle_button_new_with_label ("<");
+  gtk_box_pack_start (GTK_BOX(playHBox), backwardButton, FALSE, FALSE, 0);
+  g_signal_connect (G_OBJECT (backwardButton), "clicked",
+		    G_CALLBACK (backward), NULL);
+
+  forwardButton = gtk_toggle_button_new_with_label (">");
+  gtk_box_pack_start (GTK_BOX(playHBox), forwardButton, FALSE, FALSE, 0);
+  g_signal_connect (G_OBJECT (forwardButton), "clicked",
+		    G_CALLBACK (forward), NULL);
+ 
+  fastForwardButton = gtk_button_new_with_label (">>");
+  gtk_box_pack_start (GTK_BOX(playHBox), fastForwardButton, FALSE, FALSE, 0);
+  g_signal_connect(G_OBJECT(fastForwardButton), "clicked", 
+		   G_CALLBACK(fast_forward), NULL);
+
+  replayButton = gtk_button_new_with_label ("Replay");
+  gtk_box_pack_start (GTK_BOX(playHBox), replayButton, FALSE, FALSE, 0);
+  g_signal_connect (G_OBJECT (replayButton), "clicked",
+		    G_CALLBACK (replay), NULL);
+  
+  /* input time duration */
+  fromInputHBox = gtk_hbox_new (FALSE, 5);
+  gtk_box_pack_start (GTK_BOX(controlInternalVBox), fromInputHBox, FALSE, FALSE, 0);
+
+  fromLabel = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL(fromLabel), "From:");
+  gtk_box_pack_start (GTK_BOX (fromInputHBox), fromLabel, FALSE, FALSE, 0);
+
+  fromEntry = gtk_entry_new ();
+  gtk_entry_set_max_length (GTK_ENTRY(fromEntry), 50);
+  g_signal_connect (G_OBJECT(fromEntry), "activate", 
+		    G_CALLBACK (enter_from_time), (gpointer)fromEntry);
+  ttostr(aContext->startAt, buf);
+  gtk_entry_set_text (GTK_ENTRY (fromEntry), buf);
+  gtk_box_pack_start (GTK_BOX(fromInputHBox), fromEntry, FALSE, FALSE, 0);
+
+  untilInputHBox = gtk_hbox_new (FALSE, 5);
+  gtk_box_pack_start (GTK_BOX(controlInternalVBox), untilInputHBox, FALSE, FALSE, 0);
+
+  untilLabel = gtk_label_new (NULL);
+  gtk_label_set_markup (GTK_LABEL(untilLabel), "Until :");
+  gtk_box_pack_start (GTK_BOX (untilInputHBox), untilLabel, FALSE, FALSE, 0);
+
+  untilEntry = gtk_entry_new ();
+  gtk_entry_set_max_length (GTK_ENTRY(untilEntry), 50);
+  g_signal_connect (G_OBJECT(untilEntry), "activate", 
+		    G_CALLBACK (enter_until_time), (gpointer)untilEntry);
+  ttostr(aContext->endAt, buf);
+  gtk_entry_set_text (GTK_ENTRY (untilEntry), buf);
+  gtk_box_pack_start (GTK_BOX(untilInputHBox), untilEntry, FALSE, FALSE, 0);
+
+  /* road list */
+  roadListStore = gtk_list_store_new(NUM_RD_COLUMNS, G_TYPE_STRING);
+  aRoadItem = aContext->region->roads.head;
+  while (aRoadItem!=NULL)
+  {
+	  gtk_list_store_append(roadListStore, &iter);
+	  sprintf(buf, "%d", ((struct Road*)aRoadItem->datap)->id);
+	  gtk_list_store_set(roadListStore, &iter, COLUMN_RD_NAME, buf, -1);
+	  aRoadItem = aRoadItem->next;
+  }
+  roadListTV = gtk_tree_view_new_with_model(GTK_TREE_MODEL(roadListStore));
+  gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(roadListTV), TRUE);
+  gtk_tree_view_set_search_column(GTK_TREE_VIEW(roadListTV), COLUMN_RD_NAME);
+  g_object_unref(roadListStore);
+
+  roadListSW = gtk_scrolled_window_new (NULL, NULL);
+  gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW(roadListSW),GTK_SHADOW_ETCHED_IN);
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW(roadListSW), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_container_add(GTK_CONTAINER(roadListSW), roadListTV);
+  gtk_box_pack_start (GTK_BOX(controlHBox), roadListSW, TRUE, TRUE, 0);
+
+  roadListTVModel = gtk_tree_view_get_model(GTK_TREE_VIEW(roadListTV));
+  roadListRenderer = gtk_cell_renderer_text_new ();
+  roadListTVColumn = gtk_tree_view_column_new_with_attributes ("Road Id",
+								roadListRenderer,
+								"text",
+								COLUMN_RD_NAME,
+								NULL);
+  gtk_tree_view_column_set_sort_column_id(roadListTVColumn, COLUMN_RD_NAME);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(roadListTV), roadListTVColumn);
+
+  roadListTreeSelect = gtk_tree_view_get_selection (GTK_TREE_VIEW(roadListTV));
+  gtk_tree_selection_set_mode (roadListTreeSelect, GTK_SELECTION_SINGLE);
+  g_signal_connect(G_OBJECT (roadListTreeSelect), "changed",
+		    G_CALLBACK (roadlist_tree_selection_changed),
+		    NULL);
+  /* bus route list */
+  routeInternalVBox = gtk_vbox_new(FALSE, 5);
+
+  routeListStore = gtk_list_store_new(NUM_COLUMNS, G_TYPE_BOOLEAN, G_TYPE_STRING);
+  for(at = 0; at<aContext->routeTable.size; at++) {
+	  aRouteItem = aContext->routeTable.head[at];
+	  while (aRouteItem!=NULL)
+	  {
+		  gtk_list_store_append(routeListStore, &iter);
+		  gtk_list_store_set(routeListStore, &iter, 
+				     COLUMN_TODRAW, FALSE,
+				     COLUMN_NAME, ((struct Busroute*)aRouteItem->datap)->name,
+				     -1);
+		  aRouteItem = aRouteItem->next;
+	  }
+  }
+  routeListTV = gtk_tree_view_new_with_model(GTK_TREE_MODEL(routeListStore));
+  gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(routeListTV), TRUE);
+  gtk_tree_view_set_search_column(GTK_TREE_VIEW(routeListTV), COLUMN_NAME);
+  g_object_unref(routeListStore);
+
+  routeListSW = gtk_scrolled_window_new(NULL, NULL);
+  gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW(routeListSW),GTK_SHADOW_ETCHED_IN);
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW(routeListSW), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_container_add(GTK_CONTAINER(routeListSW), routeListTV);
+
+  gtk_box_pack_start (GTK_BOX(routeInternalVBox), routeListSW, FALSE, FALSE, 0);
+
+  routeListTVModel = gtk_tree_view_get_model(GTK_TREE_VIEW(routeListTV));
+  routeListRenderer = gtk_cell_renderer_toggle_new();
+  g_signal_connect(routeListRenderer, "toggled", G_CALLBACK(route_selected), routeListTVModel);		
+  routeListTVColumn = gtk_tree_view_column_new_with_attributes( "Show", routeListRenderer, "active", COLUMN_TODRAW, NULL);
+
+  gtk_tree_view_column_set_sizing(GTK_TREE_VIEW_COLUMN(routeListTVColumn), GTK_TREE_VIEW_COLUMN_FIXED);
+  gtk_tree_view_column_set_fixed_width(GTK_TREE_VIEW_COLUMN(routeListTVColumn), 50);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(routeListTV), routeListTVColumn);
+
+  routeListRenderer = gtk_cell_renderer_text_new();
+  routeListTVColumn = gtk_tree_view_column_new_with_attributes( "Bus route",
+								routeListRenderer,
+								"text",
+								COLUMN_NAME,
+								NULL);
+  gtk_tree_view_column_set_sort_column_id(routeListTVColumn, COLUMN_NAME);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(routeListTV), routeListTVColumn);
+
+  routeListTreeSelect = gtk_tree_view_get_selection(GTK_TREE_VIEW(routeListTV));
+  gtk_tree_selection_set_mode(routeListTreeSelect, GTK_SELECTION_SINGLE);
+  g_signal_connect (G_OBJECT(routeListTreeSelect), "changed",
+		    G_CALLBACK (routelist_tree_selection_changed),
+		    NULL);
+
+  selectAllRouteButton = gtk_check_button_new_with_label("Selete all");
+  gtk_box_pack_start (GTK_BOX(routeInternalVBox), selectAllRouteButton, FALSE, FALSE, 0);
+  g_signal_connect(G_OBJECT(selectAllRouteButton), "toggled", 
+		   G_CALLBACK(select_all_route), NULL);
+
+  gtk_box_pack_end (GTK_BOX(controlHBox), routeInternalVBox, FALSE, FALSE, 20);
+
+  /* taxi trace list */
+  traceInternalVBox = gtk_vbox_new(FALSE, 5);
+
+  traceListStore = gtk_list_store_new(NUM_COLUMNS, G_TYPE_BOOLEAN, G_TYPE_STRING);
+  for(at = 0; at<aContext->traceTable.size; at++) {
+	  aTraceItem = aContext->traceTable.head[at];
+	  while (aTraceItem!=NULL)
+	  {
+		  gtk_list_store_append(traceListStore, &iter);
+		  gtk_list_store_set(traceListStore, &iter, 
+				     COLUMN_TODRAW, FALSE,
+				     COLUMN_NAME, ((struct Trace*)aTraceItem->datap)->vName,
+				     -1);
+		  aTraceItem = aTraceItem->next;
+	  }
+  }
+  traceListTV = gtk_tree_view_new_with_model(GTK_TREE_MODEL(traceListStore));
+  gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(traceListTV), TRUE);
+  gtk_tree_view_set_search_column(GTK_TREE_VIEW(traceListTV), COLUMN_NAME);
+  g_object_unref(traceListStore);
+
+  traceListSW = gtk_scrolled_window_new(NULL, NULL);
+  gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW(traceListSW),GTK_SHADOW_ETCHED_IN);
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW(traceListSW), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_container_add(GTK_CONTAINER(traceListSW), traceListTV);
+
+  gtk_box_pack_start (GTK_BOX(traceInternalVBox), traceListSW, FALSE, FALSE, 0);
+
+  traceListTVModel = gtk_tree_view_get_model(GTK_TREE_VIEW(traceListTV));
+  traceListRenderer = gtk_cell_renderer_toggle_new();
+  g_signal_connect(traceListRenderer, "toggled", G_CALLBACK(trace_selected), traceListTVModel);		
+  traceListTVColumn = gtk_tree_view_column_new_with_attributes( "Show", traceListRenderer, "active", COLUMN_TODRAW, NULL);
+
+  gtk_tree_view_column_set_sizing(GTK_TREE_VIEW_COLUMN(traceListTVColumn), GTK_TREE_VIEW_COLUMN_FIXED);
+  gtk_tree_view_column_set_fixed_width(GTK_TREE_VIEW_COLUMN(traceListTVColumn), 50);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(traceListTV), traceListTVColumn);
+
+  traceListRenderer = gtk_cell_renderer_text_new();
+  traceListTVColumn = gtk_tree_view_column_new_with_attributes( "Vehicle ID",
+								traceListRenderer,
+								"text",
+								COLUMN_NAME,
+								NULL);
+  gtk_tree_view_column_set_sort_column_id(traceListTVColumn, COLUMN_NAME);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(traceListTV), traceListTVColumn);
+
+  traceListTreeSelect = gtk_tree_view_get_selection(GTK_TREE_VIEW(traceListTV));
+  gtk_tree_selection_set_mode(traceListTreeSelect, GTK_SELECTION_SINGLE);
+  g_signal_connect (G_OBJECT(traceListTreeSelect), "changed",
+		    G_CALLBACK (tracelist_tree_selection_changed),
+		    NULL);
+
+  selectAllTraceButton = gtk_check_button_new_with_label("Selete all");
+  gtk_box_pack_start (GTK_BOX(traceInternalVBox), selectAllTraceButton, FALSE, FALSE, 0);
+  g_signal_connect(G_OBJECT(selectAllTraceButton), "toggled", 
+		   G_CALLBACK(select_all_trace), NULL);
+
+  gtk_box_pack_end (GTK_BOX(controlHBox), traceInternalVBox, FALSE, FALSE, 20);
+
+  /* contact pair list */
+  pairInternalVBox = gtk_vbox_new(FALSE, 5);
+
+  pairListStore = gtk_list_store_new(NUM_COLUMNS, G_TYPE_BOOLEAN, G_TYPE_STRING);
+  for(at = 0; at<aContext->pairTable.size; at++) {
+	  aPairItem = aContext->pairTable.head[at];
+	  while (aPairItem!=NULL)
+	  {
+		  gtk_list_store_append(pairListStore, &iter);
+		  sprintf(buf, "%s,%s", ((struct Pair*)aPairItem->datap)->vName1, ((struct Pair*)aPairItem->datap)->vName2);
+		  gtk_list_store_set(pairListStore, &iter, 
+				     COLUMN_TODRAW, FALSE,
+				     COLUMN_NAME, buf,
+				     -1);
+		  aPairItem = aPairItem->next;
+	  }
+  }
+  pairListTV = gtk_tree_view_new_with_model(GTK_TREE_MODEL(pairListStore));
+  gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(pairListTV), TRUE);
+  gtk_tree_view_set_search_column(GTK_TREE_VIEW(pairListTV), COLUMN_NAME);
+  g_object_unref(pairListStore);
+
+  pairListSW = gtk_scrolled_window_new(NULL, NULL);
+  gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW(pairListSW),GTK_SHADOW_ETCHED_IN);
+  gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW(pairListSW), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_container_add(GTK_CONTAINER(pairListSW), pairListTV);
+
+  gtk_box_pack_start (GTK_BOX(pairInternalVBox), pairListSW, FALSE, FALSE, 0);
+
+  pairListTVModel = gtk_tree_view_get_model(GTK_TREE_VIEW(pairListTV));
+  pairListRenderer = gtk_cell_renderer_toggle_new();
+  g_signal_connect(pairListRenderer, "toggled", G_CALLBACK(pair_selected), pairListTVModel);		
+  pairListTVColumn = gtk_tree_view_column_new_with_attributes( "Show", pairListRenderer, "active", COLUMN_TODRAW, NULL);
+
+  gtk_tree_view_column_set_sizing(GTK_TREE_VIEW_COLUMN(pairListTVColumn), GTK_TREE_VIEW_COLUMN_FIXED);
+  gtk_tree_view_column_set_fixed_width(GTK_TREE_VIEW_COLUMN(pairListTVColumn), 50);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(pairListTV), pairListTVColumn);
+
+  pairListRenderer = gtk_cell_renderer_text_new();
+  pairListTVColumn = gtk_tree_view_column_new_with_attributes( "Contact Pair",
+								pairListRenderer,
+								"text",
+								COLUMN_NAME,
+								NULL);
+  gtk_tree_view_column_set_sort_column_id(pairListTVColumn, COLUMN_NAME);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(pairListTV), pairListTVColumn);
+
+  pairListTreeSelect = gtk_tree_view_get_selection(GTK_TREE_VIEW(pairListTV));
+  gtk_tree_selection_set_mode(pairListTreeSelect, GTK_SELECTION_SINGLE);
+  g_signal_connect (G_OBJECT(pairListTreeSelect), "changed",
+		    G_CALLBACK(pairlist_tree_selection_changed),
+		    NULL);
+
+  selectAllPairButton = gtk_check_button_new_with_label("Selete all");
+  gtk_box_pack_start (GTK_BOX(pairInternalVBox), selectAllPairButton, FALSE, FALSE, 0);
+  g_signal_connect(G_OBJECT(selectAllPairButton), "toggled", 
+		   G_CALLBACK(select_all_pair), NULL);
+
+  gtk_box_pack_end (GTK_BOX(controlHBox), pairInternalVBox, FALSE, FALSE, 20);
+
+  /* check box for RSU topology */
+  drawRsuTopoButton = gtk_check_button_new_with_label("Draw RSU topology");
+  gtk_box_pack_end (GTK_BOX(controlHBox), drawRsuTopoButton, FALSE, FALSE, 20);
+  g_signal_connect(G_OBJECT(drawRsuTopoButton), "toggled", 
+		   G_CALLBACK(draw_rsu_topology), NULL);
+
+
+  gtk_box_pack_start (GTK_BOX(mainVBox), controlHBox, FALSE, FALSE, 0);
+
+  /* drawing area */
+  drawingAreaFrame = gtk_frame_new(NULL);
+  gtk_frame_set_shadow_type(GTK_FRAME(drawingAreaFrame), GTK_SHADOW_IN);
+  gtk_box_pack_end(GTK_BOX(mainVBox), drawingAreaFrame, TRUE, TRUE, 0);
+
+  drawingArea = gtk_drawing_area_new();
+  screen = gdk_screen_get_default();
+  screenheight = gdk_screen_get_height(screen);
+  screenwidth = gdk_screen_get_width(screen);
+//  gtk_widget_set_size_request (drawingArea, screenwidth*0.5, screenheight*0.5);
+  gtk_widget_set_size_request (drawingArea, 500, 500);
+  gtk_container_add (GTK_CONTAINER(drawingAreaFrame), drawingArea);
+
+  g_signal_connect (drawingArea, "expose_event",
+	            G_CALLBACK (drawing_area_expose_event), NULL);
+  g_signal_connect (drawingArea, "configure_event",
+                    G_CALLBACK (drawing_area_configure_event), NULL);
+  g_signal_connect (drawingArea, "motion_notify_event",
+                    G_CALLBACK (drawing_area_motion_event), NULL);
+  g_signal_connect (drawingArea, "button_press_event",
+                    G_CALLBACK (drawing_area_button_press_event), NULL);
+  gtk_widget_set_events(drawingArea, GDK_EXPOSURE_MASK
+			| GDK_LEAVE_NOTIFY_MASK
+			| GDK_POINTER_MOTION_MASK
+			| GDK_BUTTON_PRESS_MASK
+  			| GDK_POINTER_MOTION_HINT_MASK);
+
+  aContext->drawingArea = drawingArea;
+  aContext->forwardButton = forwardButton;
+  aContext->backwardButton = backwardButton;
+
+  /* show all widgets */
+  gtk_widget_show_all(mainWindow);
+
+  gtk_main();
+  
+  destroy_context(aContext);
+  return 0;
+}
+

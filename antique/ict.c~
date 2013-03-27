@@ -1,0 +1,866 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<string.h>
+#include<time.h>
+#include<math.h>
+#include"common.h"
+#include"files.h"
+#include"contact.h"
+#include"geometry.h"
+ 
+
+struct Single
+{
+  int t1;
+
+  long count;
+};
+
+struct Couple
+{
+  int t1;
+  int t2;
+
+  long count;
+};
+
+struct Triple
+{
+  int t1;
+  int t2;
+  int t3;
+
+  long count;
+};
+
+int single_has_name(char *names, struct Single *aSingle)
+{
+	char buf[128];
+	sprintf(buf, "%d", aSingle->t1);
+	return !strcmp(names, buf);
+}
+
+int couple_has_names(char *names, struct Couple *aCouple)
+{
+	char buf[128];
+	sprintf(buf, "%d,%d", aCouple->t1, aCouple->t2);
+	return !strcmp(names, buf);
+}
+
+int triple_has_names(char *names, struct Triple *aTriple)
+{
+	char buf[128];
+	sprintf(buf, "%d,%d,%d", aTriple->t1, aTriple->t2, aTriple->t3);
+	return !strcmp(names, buf);
+}
+
+struct Pair_Result
+{
+  char vName1[NAME_LENGTH];
+  char vName2[NAME_LENGTH];
+
+  struct Hashtable *singleTable;
+  struct Hashtable *coupleTable;
+  struct Hashtable *tripleTable;
+ 
+  time_t last1StartAt;
+  time_t last1EndAt;
+  time_t last2StartAt;
+  time_t last2EndAt;
+
+  int filtered;
+  unsigned long numContacts;
+
+  double entropy;
+  double entropy1;
+  double entropy2;
+
+  unsigned long *X_a;
+  double *NMI;
+  double *NMI_a;
+};
+
+void pair_result_init_func(struct Pair_Result *aPairResult)
+{
+	if(aPairResult == NULL) 
+		return;
+	memset(aPairResult->vName1, 0, NAME_LENGTH);
+	memset(aPairResult->vName2, 0, NAME_LENGTH);
+	aPairResult->singleTable = NULL;
+	aPairResult->coupleTable = NULL;
+	aPairResult->tripleTable = NULL;
+	aPairResult->last1StartAt = 0;
+	aPairResult->last1EndAt = 0;
+	aPairResult->last2StartAt = 0;
+	aPairResult->last2EndAt = 0;
+	aPairResult->entropy = 0;
+	aPairResult->entropy1 = 0;
+	aPairResult->entropy2 = 0;
+	aPairResult->filtered = 0;
+	aPairResult->X_a = NULL;
+	aPairResult->NMI = NULL;
+	aPairResult->NMI_a = NULL;
+}
+
+int pair_result_has_names(char *names, struct Pair_Result *aPairResult)
+{
+	char buf[128];
+	sprintf(buf, "%s,%s", aPairResult->vName1, aPairResult->vName2);
+	return !strcmp(names, buf);
+}
+
+void pair_result_free_func(struct Pair_Result *aPairResult)
+{
+	if (aPairResult == NULL)
+		return;
+	if (aPairResult->singleTable != NULL)
+		hashtable_destroy(aPairResult->singleTable, free);
+	if (aPairResult->coupleTable != NULL)
+		hashtable_destroy(aPairResult->coupleTable, free);
+	if (aPairResult->tripleTable != NULL)
+		hashtable_destroy(aPairResult->tripleTable, free);
+	free(aPairResult->singleTable);
+	free(aPairResult->coupleTable);
+	free(aPairResult->tripleTable);
+	aPairResult->singleTable = NULL;
+	aPairResult->coupleTable = NULL;
+	aPairResult->tripleTable = NULL;
+	if (aPairResult->X_a != NULL)
+		free(aPairResult->X_a);
+	if (aPairResult->NMI != NULL)
+		free(aPairResult->NMI);
+	if (aPairResult->NMI_a != NULL)
+		free(aPairResult->NMI_a);
+	free(aPairResult);
+}
+
+
+double vector_entropy(unsigned long *vector, int nItems)
+{
+	int i;
+	struct Item *aSingleItem;
+	struct Single *aSingle;
+	struct Hashtable singleTable;
+	char key[128];
+	double pi, rst = 0;
+
+	hashtable_init(&singleTable, 100, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))single_has_name);
+	for(i=0;i<nItems;i++) {
+	      sprintf(key, "%ld", vector[i]);
+	      aSingleItem = hashtable_find(&singleTable, key);
+	      if(aSingleItem == NULL) {
+		      aSingle = (struct Single*)malloc(sizeof(struct Single));
+		      aSingle->t1 = vector[i];
+		      aSingle->count = 1;
+		      hashtable_add(&singleTable, key, aSingle);
+	      } else {
+		      aSingle = (struct Single*)aSingleItem->datap;
+		      aSingle->count ++;
+	      }
+        }
+	for (i=0;i<singleTable.size;i++) {
+	      aSingleItem = singleTable.head[i];
+	      while (aSingleItem != NULL) {
+			aSingle = (struct Single*)aSingleItem->datap;
+			pi = aSingle->count*1.0/nItems;
+			rst -= pi*log(pi)/log(2);	
+			aSingleItem = aSingleItem->next;
+	      }
+	}
+	hashtable_destroy(&singleTable, free);
+	return rst;
+
+}
+
+
+
+double vectors_joint_entropy(unsigned long *vector1, unsigned long *vector2, int nItems)
+{
+	int i;
+	struct Item *aCoupleItem;
+	struct Couple *aCouple;
+	struct Hashtable coupleTable;
+	char key[128];
+	double pi, rst = 0;
+
+	hashtable_init(&coupleTable, 100, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))couple_has_names);
+	for(i=0;i<nItems;i++) {
+	      sprintf(key, "%ld,%ld", vector1[i], vector2[i]);
+	      aCoupleItem = hashtable_find(&coupleTable, key);
+	      if(aCoupleItem == NULL) {
+		      aCouple = (struct Couple*)malloc(sizeof(struct Couple));
+		      aCouple->t1 = vector1[i];
+		      aCouple->t2 = vector2[i];
+		      aCouple->count = 1;
+		      hashtable_add(&coupleTable, key, aCouple);
+	      } else {
+		      aCouple = (struct Couple*)aCoupleItem->datap;
+		      aCouple->count ++;
+	      }
+        }
+	for (i=0;i<coupleTable.size;i++) {
+	      aCoupleItem = coupleTable.head[i];
+	      while (aCoupleItem != NULL) {
+			aCouple = (struct Couple*)aCoupleItem->datap;
+			pi = aCouple->count*1.0/nItems;
+			rst -= pi*log(pi)/log(2);	
+			aCoupleItem = aCoupleItem->next;
+	      }
+	}
+	hashtable_destroy(&coupleTable, free);
+	return rst;
+}
+
+
+int main( int   argc,
+          char *argv[] )
+{
+  char *ictdumpfile = NULL, *cnttemperal=NULL, *cntentropy=NULL, *cntentropy1=NULL, *cntentropy2=NULL, *cntevolving=NULL, *cntevolving_a=NULL, *fromWhichDay=NULL;
+  char key[128];
+  char buf[1024];
+  char buf1[1024];
+  char *strp, *strp1;
+  char **args;
+  FILE *fsource, *fdump;
+  
+  struct Item *aContactItem;
+  struct Contact *aContact, *bContact;
+
+  struct Hashtable pairTable;
+  struct Hashtable globalTable;
+
+  struct Item *aPairItem;
+  struct Pair *aPair;
+  struct Item *aPairResultItem;
+  struct Pair_Result *aPairResult;
+
+  struct Item *aSingleItem;
+  struct Single *aSingle;
+  struct Item *aCoupleItem;
+  struct Couple *aCouple;
+  struct Item *aTripleItem;
+  struct Triple *aTriple;
+  int magicNumber;
+
+  unsigned long pairTableSize = 10e6;
+  int tGran = DEFAULT_MEETING_TEMPORAL_GRAN;
+  int cGran = DEFAULT_MEETING_COUNTING_GRAN;
+  int mGran = 1;
+  unsigned long i, at, j, k;
+
+  long *ict_table;
+  unsigned long ictTableSize;
+  long duration = 1;
+  unsigned long seconds;
+
+  struct tm *timestamp;
+  unsigned long sliceTableSize;
+  long *slices_in_day;
+  long *contact_temperal_table;
+
+  int t1, t2, t3;
+  double pi;
+
+  int numPreviousDays = 0;
+
+  if(argc < 2) {
+	printf("Usage: %s [-sp number_of_pairs] [-gt meeting_temporal_gran(sec)] [-gm meeting_at_least(times)] [-gc meeting_counting_gran(times)] [-w1 ict_length_distribution] [-w2 contact_temperal_distribution] [-w3 contact_temperal_entropy] [-w4 contact_temporal_conditional_entropy_1] [-w5 contact_temporal_conditional_entropy_2] [-w6 fromWhichDay numPreviousDays contact_evolving contact_evolving_aggregate] .cont ...\n", argv[0]);
+	exit(1);
+  }
+  while(argv[1][0] == '-') {
+	switch(argv[1][1]) {
+	case 's':
+		if(argv[1][2] == 'p')
+			pairTableSize = atol(argv[2]);
+		argc-=2;
+		argv+=2;
+		break;
+
+	case 'g':
+		if(argv[1][2] == 't')
+			tGran = atoi(argv[2]);
+		if(argv[1][2] == 'c')
+			cGran = atoi(argv[2]);
+		if(argv[1][2] == 'm')
+			mGran = atoi(argv[2]);
+		argc-=2;
+		argv+=2;
+		break;
+
+	case 'w':
+		if(argv[1][2]=='1')
+			ictdumpfile = argv[2];
+		if(argv[1][2]=='2')
+			cnttemperal = argv[2];
+		if(argv[1][2]=='3')
+			cntentropy = argv[2];
+		if(argv[1][2]=='4')
+			cntentropy1 = argv[2];
+		if(argv[1][2]=='5')
+			cntentropy2 = argv[2];
+		if(argv[1][2]=='6') {
+			fromWhichDay = argv[2];
+			numPreviousDays = atoi(argv[3]);
+			cntevolving = argv[4];
+			cntevolving_a = argv[5];
+			argc-=3;
+			argv+=3;
+		}
+		argc-=2;
+		argv+=2;
+		break;
+		
+	default:
+		printf("Usage: %s [-sp number_of_pairs] [-gt meeting_temporal_gran(sec)] [-gm meeting_at_least(times)] [-gc meeting_counting_gran(times)] [-w1 ict_length_distribution] [-w2 contact_temperal_distribution] [-w3 contact_temperal_entropy] [-w4 contact_temporal_conditional_entropy_1] [-w5 contact_temporal_conditional_entropy_2] [-w6 fromWhichDay numPreviousDays contact_evolving contact_evolving_aggregate] .cont ...\n", argv[0]);
+		exit(1);
+	}
+  }
+
+  duration = argc-1;
+  args = argv+1;
+  seconds = duration * 24 * 3600;
+
+
+  if(ictdumpfile!= NULL || cnttemperal != NULL || cntentropy != NULL || cntentropy1 != NULL || cntentropy2 != NULL) {
+
+  	  hashtable_init(&globalTable, pairTableSize, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))pair_result_has_names);
+	  if(ictdumpfile != NULL) {
+		ictTableSize = seconds/tGran;
+		ict_table = (long*)malloc(sizeof(long)*ictTableSize);
+		for (i = 0; i<ictTableSize; i++) 
+			ict_table[i] = 0;
+	  }
+
+	  if(cnttemperal != NULL) {
+		sliceTableSize = 24*3600/tGran;
+		slices_in_day = (long*)malloc(sizeof(long)*sliceTableSize);
+		contact_temperal_table = (long*)malloc(sizeof(long)*sliceTableSize);
+		for (i = 0; i<sliceTableSize; i++) 
+			contact_temperal_table[i] = 0;
+	  }
+
+	  while(argc>1) {
+		if((fsource=fopen(argv[1], "r"))!=NULL) {
+			fscanf(fsource, "%d\n", &magicNumber);
+			printf("Loading %s file ...\n", argv[1]);
+			if(magicNumber == FILE_CONTACT) {
+				hashtable_init(&pairTable, pairTableSize, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))pair_has_names);
+				load_contacts_with_hashtable(fsource, &pairTable, NULL, NULL);
+
+				for (k=0;k<pairTable.size;k++) {
+					aPairItem = pairTable.head[k];
+					while (aPairItem != NULL) {
+						aPair = (struct Pair*)aPairItem->datap;
+
+						/* set up the coresponding pair in the global pair table */
+						sprintf(key, "%s,%s", aPair->vName1, aPair->vName2);
+						aPairResultItem = hashtable_find(&globalTable, key);
+						if(aPairResultItem == NULL) {
+							aPairResult = (struct Pair_Result*)malloc(sizeof(struct Pair_Result));
+							pair_result_init_func(aPairResult);
+							strncpy(aPairResult->vName1, aPair->vName1, strlen(aPair->vName1)+1);
+							strncpy(aPairResult->vName2, aPair->vName2, strlen(aPair->vName2)+1);
+							aPairResult->numContacts = aPair->contents.nItems;
+
+							hashtable_add(&globalTable, key, aPairResult);
+						} else {
+							aPairResult = (struct Pair_Result*)aPairResultItem->datap;
+							aPairResult->numContacts += aPair->contents.nItems;
+						}
+
+						/* contact temperal distribution */
+						if(cnttemperal != NULL) {
+							aContactItem = aPair->contents.head;
+							for(i=0;i<sliceTableSize;i++)
+								slices_in_day[i] = 0;
+							while(aContactItem!=NULL) {
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								slices_in_day[(timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran]++;
+								aContactItem = aContactItem->next;
+							}
+							j = 0;
+							for(i=0;i<sliceTableSize;i++)
+								if(slices_in_day[i])
+									j ++;
+							contact_temperal_table[j-1] ++;
+						}
+
+						/* ict length distribution */
+						if(ictdumpfile != NULL) {
+							aContactItem = aPair->contents.head;
+							if(aPairResult->last1EndAt != 0) {
+								aContact = (struct Contact*)aContactItem->datap;
+								at = (aContact->startAt-aPairResult->last1EndAt)/tGran;
+								if(at>=0 && at<ictTableSize)
+									ict_table[at] ++;
+							}
+							while(aContactItem!=NULL && aContactItem->next!=NULL) {
+								aContact = (struct Contact*)aContactItem->datap;
+								bContact = (struct Contact*)aContactItem->next->datap;
+								at = (bContact->startAt-aContact->endAt)/tGran;
+								if(at>=0 && at<ictTableSize)
+									ict_table[at] ++;
+								aContactItem = aContactItem->next;
+							}
+						}
+
+						/* contact temperal entropy*/
+						if(cntentropy != NULL && !aPairResult->filtered) {
+							if(aPairResult->singleTable == NULL) {
+								aPairResult->singleTable = (struct Hashtable*)malloc(sizeof(struct Hashtable));
+								hashtable_init(aPairResult->singleTable, 5, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))single_has_name);
+							}
+							/* entropy */
+							aContactItem = aPair->contents.head;
+							while(aContactItem!=NULL) {
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								t1 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+
+								sprintf(key, "%d", t1);
+								aSingleItem = hashtable_find(aPairResult->singleTable, key);
+								if(aSingleItem == NULL) {
+									aSingle = (struct Single*)malloc(sizeof(struct Single));
+									aSingle->t1 = t1;
+									aSingle->count = 1;
+									hashtable_add(aPairResult->singleTable, key, aSingle);
+								} else {
+									aSingle = (struct Single*)aSingleItem->datap;
+									aSingle->count ++;
+								}
+								aContactItem = aContactItem->next;
+							}
+						}
+
+
+						/* contact temperal conditional entropy 1*/
+						if(cntentropy1 != NULL && !aPairResult->filtered) {
+							if(aPairResult->coupleTable == NULL) {
+								aPairResult->coupleTable = (struct Hashtable*)malloc(sizeof(struct Hashtable));
+								hashtable_init(aPairResult->coupleTable, 5, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))couple_has_names);
+							}
+							/* conditional entropy knowing last contact */
+							aContactItem = aPair->contents.head;
+							if(aPairResult->last1StartAt != 0) {
+								timestamp = localtime(&aPairResult->last1StartAt);
+								t1 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								t2 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								sprintf(key, "%d,%d", t1, t2);
+								aCoupleItem = hashtable_find(aPairResult->coupleTable, key);
+								if(aCoupleItem == NULL) {
+									aCouple = (struct Couple*)malloc(sizeof(struct Couple));
+									aCouple->t1 = t1;
+									aCouple->t2 = t2;
+									aCouple->count = 1;
+									hashtable_add(aPairResult->coupleTable, key, aCouple);
+								} else {
+									aCouple = (struct Couple*)aCoupleItem->datap;
+									aCouple->count ++;
+								}
+							}
+							while(aContactItem!=NULL && aContactItem->next!=NULL) {
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								t1 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->next->datap;
+								timestamp = localtime(&aContact->startAt);
+								t2 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+
+								sprintf(key, "%d,%d", t1, t2);
+								aCoupleItem = hashtable_find(aPairResult->coupleTable, key);
+								if(aCoupleItem == NULL) {
+									aCouple = (struct Couple*)malloc(sizeof(struct Couple));
+									aCouple->t1 = t1;
+									aCouple->t2 = t2;
+									aCouple->count = 1;
+									hashtable_add(aPairResult->coupleTable, key, aCouple);
+								} else {
+									aCouple = (struct Couple*)aCoupleItem->datap;
+									aCouple->count ++;
+								}
+								aContactItem = aContactItem->next;
+							}
+						}
+
+						/* contact temperal conditional entropy 2*/
+						if(cntentropy2 != NULL && !aPairResult->filtered) {
+							if(aPairResult->tripleTable == NULL) {
+								aPairResult->tripleTable = (struct Hashtable*)malloc(sizeof(struct Hashtable));
+								hashtable_init(aPairResult->tripleTable, 5, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))triple_has_names);
+							}
+							/* conditional entropy knowing last two contact */
+							aContactItem = aPair->contents.head;
+							if(aPairResult->last2StartAt != 0) {
+								timestamp = localtime(&aPairResult->last2StartAt);
+								t1 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								timestamp = localtime(&aPairResult->last1StartAt);
+								t2 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								t3 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								sprintf(key, "%d,%d,%d", t1, t2, t3);
+								aTripleItem = hashtable_find(aPairResult->tripleTable, key);
+								if(aTripleItem == NULL) {
+									aTriple = (struct Triple*)malloc(sizeof(struct Triple));
+									aTriple->t1 = t1;
+									aTriple->t2 = t2;
+									aTriple->t3 = t3;
+									aTriple->count = 1;
+									hashtable_add(aPairResult->tripleTable, key, aTriple);
+								} else {
+									aTriple = (struct Triple*)aTripleItem->datap;
+									aTriple->count ++;
+								}
+							}
+
+							if(aPairResult->last1StartAt != 0 && aContactItem->next != NULL) {
+								timestamp = localtime(&aPairResult->last1StartAt);
+								t1 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								t2 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->next->datap;
+								timestamp = localtime(&aContact->startAt);
+								t3 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								sprintf(key, "%d,%d,%d", t1, t2, t3);
+								aTripleItem = hashtable_find(aPairResult->tripleTable, key);
+								if(aTripleItem == NULL) {
+									aTriple = (struct Triple*)malloc(sizeof(struct Triple));
+									aTriple->t1 = t1;
+									aTriple->t2 = t2;
+									aTriple->t3 = t3;
+									aTriple->count = 1;
+									hashtable_add(aPairResult->tripleTable, key, aTriple);
+								} else {
+									aTriple = (struct Triple*)aTripleItem->datap;
+									aTriple->count ++;
+								}
+							}
+
+							while(aContactItem!=NULL && aContactItem->next!=NULL&&aContactItem->next->next!=NULL) {
+								aContact = (struct Contact*)aContactItem->datap;
+								timestamp = localtime(&aContact->startAt);
+								t1 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->next->datap;
+								timestamp = localtime(&aContact->startAt);
+								t2 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+								aContact = (struct Contact*)aContactItem->next->next->datap;
+								timestamp = localtime(&aContact->startAt);
+								t3 = (timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran;
+
+								sprintf(key, "%d,%d,%d", t1, t2, t3);
+								aTripleItem = hashtable_find(aPairResult->tripleTable, key);
+								if(aTripleItem == NULL) {
+									aTriple = (struct Triple*)malloc(sizeof(struct Triple));
+									aTriple->t1 = t1;
+									aTriple->t2 = t2;
+									aTriple->t3 = t3;
+									aTriple->count = 1;
+									hashtable_add(aPairResult->tripleTable, key, aTriple);
+								} else {
+									aTriple = (struct Triple*)aTripleItem->datap;
+									aTriple->count ++;
+								}
+								aContactItem = aContactItem->next;
+							}
+						}
+
+
+						if (aPair->contents.head->prev != aPair->contents.head) {
+							aContact = (struct Contact*)aPair->contents.head->prev->prev->datap;
+							aPairResult->last2StartAt = aContact->startAt;
+							aPairResult->last2EndAt = aContact->endAt;
+						} else {
+							aPairResult->last2StartAt = aPairResult->last1StartAt;
+							aPairResult->last2EndAt = aPairResult->last1EndAt;
+						}
+						aContact = (struct Contact*)aPair->contents.head->prev->datap;
+						aPairResult->last1StartAt = aContact->startAt;
+						aPairResult->last1EndAt = aContact->endAt;
+
+
+						aPairItem = aPairItem->next;
+					}
+				}
+
+			} else {
+				printf("Wrong file type! File %s has been ignored.\n", argv[1]);
+			}
+			fclose(fsource);
+			hashtable_destroy(&pairTable, (void(*)(void*))pair_free_func);
+		}
+		argc--;
+		argv++;
+	  }
+	  if(ictdumpfile != NULL) {
+		  fdump = fopen(ictdumpfile, "w");
+		  for (i = 0; i<ictTableSize; i++) 
+			fprintf(fdump, "%ld %ld\n", i, ict_table[i]);
+		  fclose(fdump);
+		  free(ict_table);
+	  }
+
+	  if(cnttemperal != NULL) {
+		  fdump = fopen(cnttemperal, "w");
+		  for (i = 0; i<sliceTableSize; i++) 
+			fprintf(fdump, "%ld %ld\n", i+1, contact_temperal_table[i]);
+		  fclose(fdump);
+	  }
+	 
+	  if(cntentropy != NULL) {
+		  fdump = fopen(cntentropy, "w");
+		  for (k=0;k<globalTable.size;k++) {
+			aPairResultItem = globalTable.head[k];
+			while (aPairResultItem != NULL) {
+				aPairResult = (struct Pair_Result*)aPairResultItem->datap;
+				if(aPairResult->numContacts >= mGran && !aPairResult->filtered) {
+					for (j=0;j<aPairResult->singleTable->size;j++) {
+					      aSingleItem = aPairResult->singleTable->head[j];
+					      while (aSingleItem != NULL) {
+							aSingle = (struct Single*)aSingleItem->datap;
+							pi = aSingle->count*1.0/(aPairResult->numContacts);
+							aPairResult->entropy -= pi*log(pi)/log(2);	
+							aSingleItem = aSingleItem->next;
+					      }
+					}
+					fprintf(fdump, "%.2lf\n", aPairResult->entropy);
+				}
+				aPairResultItem = aPairResultItem->next;
+			}
+		  }
+		  fclose(fdump);
+	  }
+
+	  if(cntentropy1 != NULL) {
+		  fdump = fopen(cntentropy1, "w");
+		  for (k=0;k<globalTable.size;k++) {
+			aPairResultItem = globalTable.head[k];
+			while (aPairResultItem != NULL) {
+				aPairResult = (struct Pair_Result*)aPairResultItem->datap;
+
+				if(aPairResult->numContacts >= mGran && !aPairResult->filtered) {
+					for (j=0;j<aPairResult->coupleTable->size;j++) {
+					      aCoupleItem = aPairResult->coupleTable->head[j];
+					      while (aCoupleItem != NULL) {
+							aCouple = (struct Couple*)aCoupleItem->datap;
+							pi = aCouple->count*1.0/(aPairResult->numContacts-1);
+							aPairResult->entropy1 -= pi*log(pi)/log(2);	
+							aCoupleItem = aCoupleItem->next;
+					      }
+					}
+					fprintf(fdump, "%.2lf\n", aPairResult->entropy1);
+				}
+				aPairResultItem = aPairResultItem->next;
+			}
+		  }
+		  fclose(fdump);
+	  }
+
+	  if(cntentropy2 != NULL) {
+		  fdump = fopen(cntentropy2, "w");
+		  for (k=0;k<globalTable.size;k++) {
+			aPairResultItem = globalTable.head[k];
+			while (aPairResultItem != NULL) {
+				aPairResult = (struct Pair_Result*)aPairResultItem->datap;
+
+				if(aPairResult->numContacts >= mGran && !aPairResult->filtered) {
+					for (j=0;j<aPairResult->tripleTable->size;j++) {
+					      aTripleItem = aPairResult->tripleTable->head[j];
+					      while (aTripleItem != NULL) {
+							aTriple = (struct Triple*)aTripleItem->datap;
+							pi = aTriple->count*1.0/(aPairResult->numContacts-2);
+							aPairResult->entropy2 -= pi*log(pi)/log(2);	
+							aTripleItem = aTripleItem->next;
+					      }
+					}
+					fprintf(fdump, "%.2lf\n", aPairResult->entropy2);
+				}
+				aPairResultItem = aPairResultItem->next;
+			}
+		  }
+		  fclose(fdump);
+	  }
+  	  hashtable_destroy(&globalTable, (void(*)(void*))pair_result_free_func);
+  }
+
+  
+
+  if(cntevolving != NULL) {
+
+	int ii, jj;
+  	int onWhich;
+	unsigned long *X;
+	unsigned long *X_n;
+	unsigned long *X_a;
+	unsigned long progress;
+	unsigned long lastProgress;
+	struct Item *bPairItem;
+	struct Pair *bPair;
+	FILE *fX_n, *fdump1;
+	double entropy1, entropy2, jointEntropy;
+	int numSlices = 24*3600/tGran;
+	struct Hashtable pairTableX_n;
+
+	X = (unsigned long*)malloc(sizeof(unsigned long)*numSlices);
+	X_n = (unsigned long*)malloc(sizeof(unsigned long)*numSlices);
+	X_a = (unsigned long*)malloc(sizeof(unsigned long)*numSlices);
+
+	for (ii=0;ii<duration;ii++) {
+		if(!strcmp(args[ii], fromWhichDay)) {
+			onWhich = ii;
+			break;
+		}	
+	}
+	if((fsource=fopen(args[onWhich], "r"))!=NULL) {
+		fscanf(fsource, "%d\n", &magicNumber);
+		if(magicNumber == FILE_CONTACT) {
+  			hashtable_init(&globalTable, pairTableSize, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))pair_result_has_names);
+			/* load trace on day X */
+			printf("Loading %s file ...\n", args[onWhich]);
+			hashtable_init(&pairTable, pairTableSize, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))pair_has_names);
+			load_contacts_with_hashtable(fsource, &pairTable, NULL, NULL);
+
+			for (ii=0;ii<numPreviousDays;ii++) {
+				/* load trace on day X-n */
+				if((fX_n=fopen(args[onWhich-(ii+1)], "r"))!=NULL) {
+					fscanf(fX_n, "%d\n", &magicNumber);
+					if(magicNumber == FILE_CONTACT) {
+						printf("Loading last-%d day file %s...", ii+1, args[onWhich-(ii+1)]);
+						hashtable_init(&pairTableX_n, pairTableSize, (unsigned long(*)(void*))sdbm, (int(*)(void*, void*))pair_has_names);
+						load_contacts_with_hashtable(fX_n, &pairTableX_n, NULL, NULL);
+						progress = 0, lastProgress = 0;
+						for (k=0;k<pairTable.size;k++) {
+							aPairItem = pairTable.head[k];
+							while (aPairItem != NULL) {
+								aPair = (struct Pair*)aPairItem->datap;
+
+								progress ++;
+								if(progress*1.0/pairTable.count - lastProgress*1.0/pairTable.count > 0.05) {
+									printf("-> %.0lf%%", progress*100.0/pairTable.count);
+									lastProgress = progress;
+								}
+							
+								sprintf(key, "%s,%s", aPair->vName1, aPair->vName2);
+								bPairItem = hashtable_find(&pairTableX_n, key);
+								if(bPairItem != NULL) 
+									bPair = (struct Pair*)bPairItem->datap; 
+								else
+									bPair = NULL;
+								aPairResultItem = hashtable_find(&globalTable, key);
+								if(aPairResultItem == NULL) {
+									aPairResult = (struct Pair_Result*)malloc(sizeof(struct Pair_Result));
+									pair_result_init_func(aPairResult);
+									strncpy(aPairResult->vName1, aPair->vName1, strlen(aPair->vName1)+1);
+									strncpy(aPairResult->vName2, aPair->vName2, strlen(aPair->vName2)+1);
+
+									aPairResult->NMI=(double*)malloc(sizeof(double)*numPreviousDays);
+									memset(aPairResult->NMI, 0,sizeof(double)* numPreviousDays);
+
+									aPairResult->NMI_a=(double*)malloc(sizeof(double)*numPreviousDays);
+									memset(aPairResult->NMI_a, 0, sizeof(double)*numPreviousDays);
+
+									aPairResult->X_a=(unsigned long*)malloc(sizeof(unsigned long)*numSlices);
+									memset(aPairResult->X_a, 0, sizeof(unsigned long)*numSlices);
+
+									aPairResult->numContacts = aPair->contents.nItems;
+
+									hashtable_add(&globalTable, key, aPairResult);
+								} else {
+									aPairResult = (struct Pair_Result*)aPairResultItem->datap;
+								}
+								if(bPair!=NULL) 
+									aPairResult->numContacts += bPair->contents.nItems;
+
+								/* set up X */
+								memset(X, 0, sizeof(unsigned long)*numSlices);
+								aContactItem = aPair->contents.head;
+								while(aContactItem !=NULL) {
+									aContact = (struct Contact*)aContactItem->datap;
+									timestamp = localtime(&aContact->startAt);
+									//X[(timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran] ++;
+									X[(timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran] = 1;
+									aContactItem = aContactItem->next;
+								}
+								/* set up X-n */
+								memset(X_n, 0, sizeof(unsigned long)*numSlices);
+								if(bPair!=NULL) {
+									aContactItem = bPair->contents.head;
+									while(aContactItem !=NULL) {
+										aContact = (struct Contact*)aContactItem->datap;
+										timestamp = localtime(&aContact->startAt);
+										//X_n[(timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran] ++;
+										X_n[(timestamp->tm_hour*3600+timestamp->tm_min*60+timestamp->tm_sec)/tGran] = 1;
+										aContactItem = aContactItem->next;
+									}
+								}
+								/* set up sum X-1:X-n */
+								for(jj=0;jj<numSlices;jj++) {
+									if(aPairResult->X_a[jj] == 0)
+										aPairResult->X_a[jj] = X_n[jj];
+									//aPairResult->X_a[jj] += X_n[jj];
+									X_a[jj] = aPairResult->X_a[jj];
+								}
+								/*	
+								for(jj=0;jj<numSlices;jj++) {
+									X[jj] /= cGran;
+									X_n[jj] /= cGran;
+									X_a[jj] /= cGran;
+								}
+								*/	
+								entropy1 = vector_entropy(X, numSlices);
+								entropy2 = vector_entropy(X_n, numSlices);
+								jointEntropy = vectors_joint_entropy(X, X_n, numSlices);
+								aPairResult->NMI[ii] = (entropy1+entropy2-jointEntropy)/entropy1;
+
+								entropy2 = vector_entropy(X_a, numSlices);
+								jointEntropy = vectors_joint_entropy(X, X_a, numSlices);
+								aPairResult->NMI_a[ii] = (entropy1+entropy2-jointEntropy)/entropy1;
+								aPairItem = aPairItem->next;
+							}
+						}
+  						hashtable_destroy(&pairTableX_n, (void(*)(void*))pair_free_func);
+						printf("\n");
+					}
+					fclose(fX_n);
+				}
+			}
+			fdump = fopen(cntevolving, "w");
+			fdump1 = fopen(cntevolving_a, "w");
+			for (k=0;k<globalTable.size;k++) {
+			      aPairResultItem = globalTable.head[k];
+			      while (aPairResultItem != NULL) {
+				      aPairResult = (struct Pair_Result*)aPairResultItem->datap;
+				      if(aPairResult->numContacts >= mGran && !aPairResult->filtered) {
+						memset(buf, 0, 1024);
+						memset(buf1, 0, 1024);
+						strp = buf, strp1 = buf1;
+						for (ii=0;ii<numPreviousDays;ii++) {
+					      		sprintf(strp, "%.4lf ", aPairResult->NMI[ii]);
+					      		sprintf(strp1, "%.4lf ", aPairResult->NMI_a[ii]);
+							strp += 7, strp1 += 7;
+						}
+						fprintf(fdump, "%s\n", buf);
+						fprintf(fdump1, "%s\n", buf1);
+				      }
+				      aPairResultItem = aPairResultItem->next;
+			      }
+			}
+		  	fclose(fdump);
+		  	fclose(fdump1);
+
+  			hashtable_destroy(&pairTable, (void(*)(void*))pair_free_func);
+  			hashtable_destroy(&globalTable, (void(*)(void*))pair_result_free_func);
+		}
+		fclose(fsource);
+  	}
+	free(X);
+	free(X_n);
+	free(X_a);
+  }
+
+
+  return 0;
+}

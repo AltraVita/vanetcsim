@@ -1,0 +1,346 @@
+BLANK	= # make a blank space.  DO NOT add anything to this line
+# Pathname of directory to install the binary
+BINDEST	= ~/bin
+
+CC	= gcc
+LINK	= $(CC)
+
+#INSTALL	= /usr/bin/install -c
+INSTALL	= install -c
+LN	= ln
+RM	= rm -f
+MV      = mv
+
+LDFLAGS	= 
+LDOUT	= -o $(BLANK)
+
+INCLUDES= \
+	-I/usr/include/gtk-2.0 -I/usr/lib/gtk-2.0/include -I/usr/include/atk-1.0 \
+	-I/usr/include/cairo -I/usr/include/pango-1.0 -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include \
+	-I/usr/include/freetype2 -I/usr/include/libpng12 \
+ 	-I./trace -I./trace/bus -I./common -I./geometry -I./GUI -I./GUI/color -I./mobility \
+	-I./simulation/pkg -I./simulation/node -I./simulation/event -I./simulation/oracle -I./simulation/traffic -I./simulation/simulator \
+	-I./apps/sybil/cliquer
+
+LIBS	= \
+	-L/lib -lgtk-x11-2.0 -lgdk-x11-2.0 -latk-1.0 -lgdk_pixbuf-2.0 \
+	-lpangocairo-1.0 -lpango-1.0 -lcairo -lgobject-2.0 -lgmodule-2.0 -ldl -lglib-2.0 \
+	-lm -lpng12 -lpangoft2-1.0 -pthread
+
+CFLAGS	= -g -Wall -D_FILE_OFFSET_BITS=64
+
+.c.o:
+	@rm -f $@
+	$(CC) -c $(CFLAGS) $(INCLUDES) -o $@ $*.c
+
+OBJ_VIEWER= \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	simulation/pkg/pkg.o simulation/node/node.o simulation/node/storage.o \
+	trace/trace.o trace/bus/busroute.o \
+	mobility/contact.o \
+	GUI/mapviewer.o GUI/gtk_cairo.o GUI/events.o
+OBJ_MAP	= \
+	common/common.o trace/trace.o \
+	geometry/geometry.o geometry/maptuner.o
+OBJ_PICK= \
+	common/common.o \
+	trace/convertor/shanghai/shgps.o \
+	trace/convertor/shanghai/pickshgps.o
+OBJ_SPLIT= \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/convertor/shanghai/shgps.o \
+	trace/trace.o trace/convertor/shanghai/splitshgps.o
+OBJ_GETROUTE = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o trace/bus/busroute.o trace/bus/getroute.o 
+OBJ_DIST = \
+	common/common.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	tools/dist.o
+OBJ_CONTACTFINDER = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	mobility/contact.o mobility/contactfinder.o
+OBJ_PAIR_FILTER = \
+	common/common.o common/files.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	mobility/contact.o mobility/pair_filter.o 
+OBJ_VMOBILITY = \
+	common/common.o common/files.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	mobility/vmobility.o 
+OBJ_ICT = \
+	common/common.o common/files.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	mobility/contact.o mobility/ict.o 
+OBJ_ICT_REDUNDENCY = \
+	common/common.o common/files.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	mobility/contact.o mobility/ict_redundency.o 
+OBJ_DIVIDELIST = \
+	common/common.o \
+	tools/dividelist.o
+OBJ_COMSET = \
+	common/common.o \
+	tools/comset.o
+OBJ_GENGPS = \
+	common/common.o common/rnorrexp.o \
+	geometry/geometry.o \
+	trace/trace.o trace/genmgd.o
+OBJ_CUT = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o trace/cutgd.o 
+OBJ_RMDEFACT = \
+	tools/rmdefact.o
+OBJ_PDF = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	mobility/contact.o \
+	trace/trace.o \
+	tools/getpdf.o 
+OBJ_GETROUTESCOVERAGE = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o trace/bus/busroute.o \
+	tools/getRoutesCoverage.o 
+OBJ_GETREGIONAREA = \
+	common/common.o \
+	geometry/geometry.o \
+	tools/getRegionArea.o 
+OBJ_GETTRACEBOX = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	tools/getTraceBox.o 
+OBJ_PARSEPKGDUMP = \
+	common/common.o \
+	geometry/geometry.o \
+	simulation/node/node.o simulation/node/storage.o simulation/pkg/pkg.o simulation/traffic/traffic.o \
+	tools/parsePkgDump.o 
+OBJ_GETFPOS = \
+	tools/getfpos.o
+OBJ_GETAVG = \
+	common/common.o \
+	tools/getavg.o
+OBJ_STRTOT = \
+	common/common.o \
+	tools/strtot.o
+OBJ_GETDLY = \
+	common/common.o \
+	tools/getdly.o
+OBJ_LOG2OGD = \
+	common/common.o \
+	trace/convertor/shenzhen/sztaxi2ogd.o
+OBJ_LOG2TXT = \
+	common/common.o \
+	trace/convertor/shenzhen/sztaxi2txt.o
+OBJ_OGD2MGD = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o trace/bus/busroute.o trace/ogd2mgd.o 
+OBJ_INSERTMGD = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o trace/bus/busroute.o trace/insertmgd.o 
+OBJ_RSUTIME = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	apps/sybil/trajectory/traj.o apps/sybil/trajectory/rsutime.o 
+OBJ_CHECKTRAJ = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	apps/sybil/cliquer/cliquer.o apps/sybil/cliquer/graph.o apps/sybil/cliquer/reorder.o \
+	apps/sybil/trajectory/traj.o apps/sybil/trajectory/checktraj.o 
+OBJ_SPOOFTRAJ = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	apps/sybil/trajectory/traj.o apps/sybil/trajectory/spooftraj.o 
+OBJ_LOGTRAJ = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	apps/sybil/trajectory/traj.o apps/sybil/trajectory/logtraj.o 
+OBJ_SYBILRST = \
+	common/common.o \
+	apps/sybil/sybilrst.o 
+OBJ_VCOVER = \
+	common/common.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	apps/sybil/topology/vcover.o  
+OBJ_RSUTOPO = \
+	common/common.o \
+	trace/trace.o \
+	geometry/geometry.o \
+	apps/sybil/topology/rsutopo.o 
+OBJ_DUMPRUNS = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	trace/trace.o \
+	apps/FairTaxi/dumpruns.o 
+OBJ_CHECKFEE = \
+	common/common.o \
+	apps/FairTaxi/checkfee.o 
+OBJ_DUMPREP = \
+	common/common.o \
+	apps/FairTaxi/dumprep.o 
+OBJ_RUN_ADHOC_FWDING = \
+	common/common.o common/files.o \
+	mobility/contact.o \
+	trace/trace.o trace/bus/busroute.o \
+	geometry/geometry.o \
+	simulation/pkg/pkg.o simulation/node/node.o simulation/node/storage.o simulation/event/event.o simulation/event/cntEvent.o \
+	simulation/simulator/simulator.o \
+	simulation/oracle/oracle.o simulation/traffic/traffic.o simulation/exprs/run_adhoc_fwding.o  
+OBJ_RUN_BUSNET = \
+	common/common.o common/files.o \
+	geometry/geometry.o \
+	mobility/contact.o \
+	trace/trace.o trace/bus/busroute.o \
+	simulation/oracle/oracle.o simulation/pkg/pkg.o simulation/node/node.o simulation/node/storage.o simulation/traffic/traffic.o \
+	simulation/event/event.o simulation/event/cntEvent.o simulation/event/busArriveCellEvent.o simulation/event/busMeetStorageEvent.o \
+	simulation/event/busMeetBusEvent.o simulation/event/taxiMeetBusEvent.o simulation/event/taxiMeetStorageEvent.o \
+	simulation/simulator/simulator.o \
+	simulation/exprs/run_busnet.o  
+
+CLEANFILES= \
+	mapviewer maptuner pickshgps splitshgps dist contactfinder dividelist comset pair_filter vmobility ict_redundency ict cutgd \
+	genmgd getpdf redefact strtot getdly getfpos getRoutesCoverage getRegionArea parsePkgDump getTraceBox getavg picktxt sztaxi2ogd sztaxi2txt insertmgd ogd2mgd \
+	run_busnet run_adhoc_fwding getroute rmdefact \
+	checkfee dumpruns dumprep rsutime checktraj spooftraj sybilrst logtraj vcover rsutopo \
+	common/common.o common/files.o common/rnorrexp.o\
+	geometry/geometry.o geometry/maptuner.o trace/bus/busroute.o trace/bus/getroute.o \
+	trace/trace.o trace/convertor/shanghai/pickgps.o trace/genmgd.o trace/convertor/shanghai/splitshgps.o trace/insertmgd.o \
+	trace/cutgd.o trace/convertor/shenzhen/sztaxi2ogd.o trace/convertor/shenzhen/sztaxi2txt.o trace/ogd2mgd.o trace/convertor/shanghai/pickshgps.o \
+	trace/convertor/shanghai/shgps.o \
+	GUI/mapviewer.o GUI/gtk_cairo.o GUI/events.o \
+	mobility/contact.o mobility/mobility.o mobility/contactfinder.o mobility/vmobility.o mobility/ict_redundency.o \
+	mobility/ict.o mobility/pair_filter.o mobility/ict_nmi.o \
+	tools/comset.o tools/dividelist.o tools/getpdf.o tools/rmdefact.o tools/dist.o tools/getdly.o tools/strtot.o \
+	tools/getfpos.o tools/parsePkgDump.o tools/getTraceBox.o tools/getRoutesCoverage tools/getRegionBox tools/getavg.o tools/getRegionArea.o tools/getRoutesCoverage.o\
+	apps/FairTaxi/dumpruns.o apps/FairTaxi/checkfee.o apps/FairTaxi/dumprep.o \
+	apps/sybil/trajectory/traj.o apps/sybil/trajectory/logtraj.o apps/sybil/sybilrst.o apps/sybil/trajectory/checktraj.o apps/sybil/trajectory/rsutime.o \
+	apps/sybil/trajectory/spooftraj.o apps/sybil/topology/vcover.o apps/sybil/topology/rsutopo.o \
+	apps/sybil/cliquer/cliquer.o apps/sybil/cliquer/reorder.o apps/sybil/cliquer/testcases.o apps/sybil/cliquer/cl.o apps/sybil/cliquer/graph.o \
+	simulation/pkg/pkg.o simulation/node/node.o simulation/node/storage.o simulation/simulator/simulator.o \
+	simulation/oracle/oracle.o simulation/traffic/traffic.o simulation/exprs/run_busnet.o simulation/exprs/run_adhoc_fwding.o \
+	simulation/event/event.o simulation/event/cntEvent.o simulation/event/busArriveCellEvent.o \
+	simulation/event/busMeetStorageEvent.o simulation/event/busMeetBusEvent.o \
+	simulation/event/taxiMeetBusEvent.o simulation/event/taxiMeetStorageEvent.o 
+	
+all:	clean mapviewer maptuner pickshgps splitshgps dist contactfinder getroute \
+	pair_filter vmobility ict_redundency ict dividelist comset genmgd cutgd rmdefact getpdf getRoutesCoverage getRegionArea parsePkgDump getTraceBox strtot \
+	getdly getfpos getavg picktxt \
+	sztaxi2ogd sztaxi2txt insertmgd ogd2mgd rsutime checktraj spooftraj sybilrst logtraj vcover rsutopo dumpruns checkfee dumprep run_busnet run_adhoc_fwding
+run_busnet: $(OBJ_RUN_BUSNET)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_RUN_BUSNET)  $(LIBS)
+run_adhoc_fwding: $(OBJ_RUN_ADHOC_FWDING)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_RUN_ADHOC_FWDING)  $(LIBS)
+mapviewer: $(OBJ_VIEWER) 
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_VIEWER)  $(LIBS)
+maptuner: $(OBJ_MAP) 
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_MAP)  $(LIBS)
+pickshgps: $(OBJ_PICK) 
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_PICK)  $(LIBS)
+getroute: $(OBJ_GETROUTE)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETROUTE)  $(LIBS)
+splitshgps: $(OBJ_SPLIT)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_SPLIT)  $(LIBS)
+dist: $(OBJ_DIST)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_DIST)  $(LIBS)
+contactfinder: $(OBJ_CONTACTFINDER)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_CONTACTFINDER)  $(LIBS)
+pair_filter: $(OBJ_PAIR_FILTER)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_PAIR_FILTER)  $(LIBS)
+vmobility: $(OBJ_VMOBILITY)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_VMOBILITY)  $(LIBS)
+ict: $(OBJ_ICT)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_ICT)  $(LIBS)
+ict_redundency: $(OBJ_ICT_REDUNDENCY)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_ICT_REDUNDENCY)  $(LIBS)
+dividelist: $(OBJ_DIVIDELIST)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_DIVIDELIST)  $(LIBS)
+comset: $(OBJ_COMSET)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_COMSET)  $(LIBS)
+genmgd: $(OBJ_GENGPS)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GENGPS)  $(LIBS)
+cutgd: $(OBJ_CUT)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_CUT)  $(LIBS)
+rmdefact: $(OBJ_RMDEFACT)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_RMDEFACT)  $(LIBS)
+getpdf: $(OBJ_PDF)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_PDF)  $(LIBS)
+getRoutesCoverage: $(OBJ_GETROUTESCOVERAGE)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETROUTESCOVERAGE)  $(LIBS)
+getRegionArea: $(OBJ_GETREGIONAREA)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETREGIONAREA)  $(LIBS)
+getTraceBox: $(OBJ_GETTRACEBOX)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETTRACEBOX)  $(LIBS)
+parsePkgDump: $(OBJ_PARSEPKGDUMP)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_PARSEPKGDUMP)  $(LIBS)
+strtot: $(OBJ_STRTOT)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_STRTOT)  $(LIBS)
+getdly: $(OBJ_GETDLY)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETDLY)  $(LIBS)
+getfpos: $(OBJ_GETFPOS)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETFPOS)  $(LIBS)
+sztaxi2ogd: $(OBJ_LOG2OGD)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_LOG2OGD)  $(LIBS)
+sztaxi2txt: $(OBJ_LOG2TXT)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_LOG2TXT)  $(LIBS)
+ogd2mgd: $(OBJ_OGD2MGD)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_OGD2MGD)  $(LIBS)
+insertmgd: $(OBJ_INSERTMGD)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_INSERTMGD)  $(LIBS)
+checktraj: $(OBJ_CHECKTRAJ)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_CHECKTRAJ)  $(LIBS)
+rsutime: $(OBJ_RSUTIME)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_RSUTIME)  $(LIBS)
+spooftraj: $(OBJ_SPOOFTRAJ)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_SPOOFTRAJ)  $(LIBS)
+sybilrst: $(OBJ_SYBILRST)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_SYBILRST)  $(LIBS)
+logtraj: $(OBJ_LOGTRAJ)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_LOGTRAJ)  $(LIBS)
+vcover: $(OBJ_VCOVER)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_VCOVER)  $(LIBS)
+rsutopo: $(OBJ_RSUTOPO)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_RSUTOPO)  $(LIBS)
+dumpruns: $(OBJ_DUMPRUNS)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_DUMPRUNS)  $(LIBS)
+checkfee: $(OBJ_CHECKFEE)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_CHECKFEE)  $(LIBS)
+dumprep: $(OBJ_DUMPREP)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_DUMPREP)  $(LIBS)
+getavg: $(OBJ_GETAVG)
+	$(LINK) $(LDFLAGS) $(LDOUT)$@ $(OBJ_GETAVG)  $(LIBS)
+picktxt:
+	$(CC) $(LDFLAGS) $(CFLAGS) $(LDOUT) picktxt tools/picktxt.c -lm
+
+install: 
+	$(INSTALL) -m 755 mapviewer maptuner pickshgps splitshgps dist contactfinder getroute \
+		vmobility ict_redundency ict pair_filter dividelist comset genmgd cutgd rmdefact getpdf strtot getdly getfpos getRoutesCoverage \
+		getRegionArea parsePkgDump getTraceBox getavg picktxt \
+		sztaxi2ogd sztaxi2txt ogd2mgd insertmgd rsutime checktraj spooftraj sybilrst logtraj vcover rsutopo dumpruns checkfee dumprep \
+		run_busnet run_adhoc_fwding $(BINDEST)
+	$(RM) mapviewer maptuner pickshgps splitshgps dist contactfinder getroute \
+		vmobility ict_redundency ict pair_filter dividelist comset genmgd cutgd rmdefact getpdf strtot getdly getfpos getRoutesCoverage \
+		getRegionArea parsePkgDump getTraceBox getavg picktxt \
+		sztaxi2ogd sztaxi2txt ogd2mgd insertmgd rsutime checktraj spooftraj sybilrst logtraj vcover rsutopo dumpruns checkfee dumprep \
+		run_busnet run_adhoc_fwding
+
+clean:
+	$(RM) $(CLEANFILES)

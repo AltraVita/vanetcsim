@@ -1,0 +1,121 @@
+* MapMatching Notes
+
+** Variables
+*** Item
+/aItem/ is one pointer pointing current report in trace /aTrace/
+
+struct Item
+{
+  void *datap;
+  struct Item *prev;
+  struct Item *next;
+};
+
+*** struct Trace
+struct Trace
+{
+  char vName[NAME_LENGTH];
+  char type;
+  struct Duallist reports;
+  struct Item *at;
+
+  /*the duration of the trace*/
+  time_t startAt;
+  time_t endAt;
+
+  struct Box box; 
+
+  /* for bus start-> */
+  char onRoute[NAME_LENGTH];
+  /* <-end */
+ 
+  double maxSpeed;
+  double countdown;
+  char isHeadingValid;
+
+  union Int_RGBO color;
+  /* for multiple purposes */
+  double var1;
+  double var2;
+  double var3;
+};
+
+*** Report
+struct Report 
+{
+  time_t timestamp;
+  struct Point gPoint;
+  short speed;
+  short angle;
+  char state;
+
+  /* for bus start->*/
+  char msgType;
+  double routeLeng;
+  double gasVol;
+  char errorInfo;
+  /* <-end */
+
+  char shown; 
+
+  struct Duallist candRoads; //
+  struct Item *onRoad;    // onRoad pointing to the first candRoad in candRoads
+  int onRoadId;
+  /* on the path determined by amend_algorithm */
+  struct Path *onPath;
+
+  struct Trace* fromTrace;
+};
+
+*** CandRoad
+struct CandRoad
+{
+  struct Road *aRoad;
+  double distance;
+  double angle;
+  double weight;
+  struct Point gPoint;
+  struct Segment onSegment;
+};
+
+*** CandChoice
+struct CandChoice {
+  struct Item *onRoad;
+  double score;
+};
+
+*** report-> onRoad 
+/onRoad/ is the pointer to the Road that this trace is on.
+if /onRoad/ is /NULL/, the GPS report is on none of the roads, which indicates that
+this report is defect.
+
+*** report->CandRoads?
+
+*** bTrace, dTrace
+/dtrace/ represents the defect traces, which would be eliminated from the original trace
+while the /btrace/ indicates the validate traces, which is validate trace that can be used to do simulation
+
+*** CandChoice
+/choices/ is a /Duallist/ of /CandChoice/
+/candChoice->onRoad/ is the road that one report is likely to be on.
+/choices/ is a priority duallist?
+where do the /TOP_N_CANDIDATES/ come from? -> the while loop just look for the best n choices.
+*** distance functions
+Tool function
+**** distance_point_to_segment
+Tool fuction
+double distance_point_to_segment(struct Point *aPoint, struct Segment*aSegment, struct Point *crossPoint)
+**** distnace_point_to_polyline
+double distance_point_to_polyline(struct Point * aPoint, const struct Duallist * polyline, struct Point * crossPoint, struct Segment* onSegment);
+*** find all relevant sengment?
+It will be found in 
+
+*** add_candidate_road()
+It will take /heading angle/ and the /distance/ into considerationi
+
+*** debug: segment fault
+/newCandRoad->aRoad/ is not a valid pointer
+((struct CandRoad*)aRep->onRoad->datap)->aRoad is not a valid pointer
+in /struct report/, the /onRoad/ field is an /Item/, that iterates /CandRoad/
+((struct CandChoice*)choices.head->datap)->onRoad is not a valid pointer
+in /struct Report/, /candRoads/ is a /Duallist/ with elements /struct CandChoice/

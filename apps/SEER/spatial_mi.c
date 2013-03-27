@@ -1,0 +1,309 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+
+#define ROADSNUM 1000 
+
+struct SampleList
+{	
+	double value;
+	struct SampleList *next;
+};
+
+struct RoadList
+{
+	int rId;
+	int rDi;
+	struct SampleList *samples;
+	struct RoadList *next;
+};
+
+struct WhichRoad
+{
+	int rId;
+	int rDi;
+	double *redundancy;
+	double *samples;
+};
+
+struct PUnion
+{
+	int *x;
+	double value;
+	struct PUnion *next;
+};
+
+int main(int argc, char**argv)
+{
+	FILE *fdump,*froadlist;
+	char line[256], *q, *p, *buffer;
+	struct SampleList *samples = NULL, *tmp, *newp, *sp;
+	int i, j, nSlides, rId, rDi,interval, M, urId, urDi, count, row, rd;
+	struct RoadList *roads = NULL, *newRoad, *tmproad, *whichroad;
+	struct PUnion **cp;
+	struct WhichRoad which;
+
+	if(argc < 4) {
+		printf("Usage: %s nSlides dumpfile interval\n", argv[0]);
+		exit(0);
+	}
+	if((fdump=fopen(argv[2], "r"))==NULL) {
+		printf("Cannot open %s to read!\n", argv[2]);
+		exit(-1);
+	}
+
+	nSlides=atoi(argv[1]);
+	interval = atoi(argv[3]);
+
+	buffer = (char*)malloc(32*(nSlides+1));
+	for (i=0;i<10;i++)
+		fgets(line, 256, fdump);
+
+	while (fgetc(fdump)!=EOF)
+	{
+		fseek(fdump, -1, SEEK_CUR);
+
+		fgets(buffer, 32*(nSlides+1), fdump);
+		p = strtok(buffer, " ");
+		if(atoi(p)==0) {
+			p = strtok(NULL, " ");
+			rId = atoi(p);
+			p = strtok(NULL, " ");
+			rDi = atoi(p);
+			
+			newRoad = (struct RoadList*)malloc(sizeof(struct RoadList));
+			newRoad->rId = rId;
+			newRoad->rDi = rDi;
+			newRoad->samples = NULL;
+			newRoad->next = NULL;
+			
+			if(roads == NULL) {
+				roads = newRoad;
+				tmproad = newRoad;
+				count = 1;
+			} else {
+				tmproad->next = newRoad;
+				tmproad = newRoad;
+				count ++;
+			}	
+		} else {
+			for(i=0;i<nSlides; i++) {
+				p = strtok(NULL, " ");
+				newp = (struct SampleList*)malloc(sizeof(struct SampleList));
+				if(strcmp(p, "NaN")==0)
+					newp->value = -1;
+				else {
+					newp->value = floor(atof(p)/interval);
+				}
+				newp->next = NULL;
+			
+				if(newRoad->samples == NULL) {
+					newRoad->samples = newp;
+					tmp = newp;
+				} else {
+					tmp->next = newp;
+					tmp = newp;
+				}
+			}
+
+		}
+	}
+	fclose(fdump);
+
+	unsigned nSamples, nSamples1, nSamples2;
+	double vlg, hxy, hy, hx;
+	struct PUnion *newpx, *apx, *pxys, *pxs, *pys;
+
+	whichroad = roads;
+	while(whichroad!=NULL) {
+		which.rId = whichroad->rId;
+		which.rDi = whichroad->rDi;
+		which.redundancy = (double *)malloc(sizeof(double)*(count-1));
+		for(i=0;i<count-1;i++)
+			which.redundancy[i] = 0;
+		which.samples = (double *)malloc(sizeof(double)*nSlides*count);
+		tmp = whichroad->samples;
+		row = 0;
+		while(tmp!=NULL) {
+			which.samples[row*count+0] = tmp->value;
+			tmp = tmp->next;
+			row ++;
+		}	
+		i = 1;
+		tmproad = roads;
+		while(tmproad!=NULL) {
+			if(!(tmproad->rId == whichroad->rId && tmproad->rDi ==whichroad->rDi)) {
+				tmp=tmproad->samples;
+				row = 0;
+				while(tmp!=NULL) {
+					which.samples[row*count+i] = tmp->value;
+					tmp=tmp->next;
+					row ++;
+				}
+				i++;
+			}
+			tmproad = tmproad->next;
+		}
+
+		for(i=1;i<count;i++) {
+			nSamples = 0;
+			pxs = NULL;
+			nSamples1 = 0, nSamples2 = 0;
+			pxys = NULL, pys = NULL;
+			for(j=0;j<nSlides;j++) {
+				if(which.samples[j*count]!= -1 && which.samples[j*count+i] != -1) {
+					apx = pxs;
+					while(apx!=NULL) {
+						if(apx->x[0]==which.samples[j*count+0]) {
+							apx->value += 1;
+							nSamples ++;
+							break;
+						}
+						apx = apx->next;
+					}
+					if(apx == NULL) {
+						newpx=(struct PUnion*)malloc(sizeof(struct PUnion));
+						newpx->x = (int *)malloc(sizeof(int));
+						newpx->x[0] = which.samples[j*count+0];
+						newpx->value = 1;
+						nSamples ++;
+						newpx->next = NULL;
+						if(pxs == NULL) 
+							pxs = newpx;
+						else {
+							newpx->next = pxs;
+							pxs = newpx;
+						}
+					}
+				}
+				if(which.samples[j*count]!= -1 && which.samples[j*count+i] != -1) {
+					apx = pxys;
+					while(apx!=NULL) {
+						if(apx->x[0]==which.samples[j*count] && apx->x[1]==which.samples[j*count+i]) {
+							apx->value += 1;
+							nSamples1 ++;
+							break;
+						}
+						apx = apx->next;
+					}
+					if(apx == NULL) {
+						newpx=(struct PUnion*)malloc(sizeof(struct PUnion));
+						newpx->x = (int *)malloc(sizeof(int)*2);
+						newpx->x[0] = which.samples[j*count];
+						newpx->x[1] = which.samples[j*count+i];
+						newpx->value = 1;
+						nSamples1 ++;
+						newpx->next = NULL;
+						if(pxys == NULL) 
+							pxys = newpx;
+						else {
+							newpx->next = pxys;
+							pxys = newpx;
+						}
+					}
+				}
+				if(which.samples[j*count]!= -1 && which.samples[j*count+i] != -1) {
+					apx = pys;
+					while(apx!=NULL) {
+						if(apx->x[0]==which.samples[j*count+i]) {
+							apx->value += 1;
+							nSamples2 ++;
+							break;
+						}
+						apx = apx->next;
+					}
+					if(apx == NULL) {
+						newpx=(struct PUnion*)malloc(sizeof(struct PUnion));
+						newpx->x = (int *)malloc(sizeof(int));
+						newpx->x[0] =which.samples[j*count+i] ;
+						newpx->value = 1;
+						nSamples2 ++;
+						newpx->next = NULL;
+						if(pys == NULL) 
+							pys = newpx;
+						else {
+							newpx->next = pys;
+							pys = newpx;
+						}
+					}
+				}
+			}
+			hx = 0;
+			apx = pxs;
+			while(apx!=NULL) {
+				apx->value = apx->value/nSamples;
+				vlg=log(apx->value)/log(2);
+				hx = hx - apx->value*vlg;
+				apx = apx->next;
+			}
+			apx = pxs;
+			while(apx!=NULL) {
+				pxs=apx->next;
+				free(apx->x);
+				free(apx);
+				apx = pxs;
+			}
+			hxy=0;
+			if(nSamples1>100) {
+				apx = pxys;
+				while(apx!=NULL) {
+					apx->value = apx->value/nSamples1;
+					vlg=log(apx->value)/log(2);
+					hxy = hxy - apx->value*vlg;
+					apx = apx->next;
+				}
+			}
+			apx = pxys;
+			while(apx!=NULL) {
+				pxys=apx->next;
+				free(apx->x);
+				free(apx);
+				apx = pxys;
+			}
+
+			hy=0;
+			if(nSamples2>100) {
+				apx = pys;
+				while(apx!=NULL) {
+					apx->value = apx->value/nSamples2;
+					vlg=log(apx->value)/log(2);
+					hy = hy - apx->value*vlg;
+					apx = apx->next;
+				}
+			}
+			apx = pys;
+			while(apx!=NULL) {
+				pys=apx->next;
+				free(apx->x);
+				free(apx);
+				apx = pys;
+			}
+			if(hxy>0&&hy>0&&hx>0) {
+				which.redundancy[i-1]= (hx +hy- hxy)/(hx + hy);
+			}
+		}
+		for(i=0;i<count-1;i++)
+			printf("%.4lf ", which.redundancy[i]);
+		printf("\n");
+
+		free(which.redundancy);
+		free(which.samples);
+		whichroad = whichroad->next;
+	}
+
+
+
+
+	tmproad = roads;
+	while(tmproad!=NULL) {
+		tmp = tmproad->samples;
+		while(tmp!=NULL) {
+			tmproad->samples=tmp->next;
+			free(tmp);
+			tmp = tmproad->samples;
+		}
+		roads = tmproad->next;
+		free(tmproad);
+		tmproad = roads;
+	}
+}
